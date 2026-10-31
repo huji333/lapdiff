@@ -1,0 +1,2 @@
+# fixtures の CSV は改行コード（CRLF）を含めて元のまま保つ
+fixtures/** -text
