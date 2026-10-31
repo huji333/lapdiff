@@ -1,0 +1,1052 @@
+{
+ "generated_by": {
+  "script": "ingest/tests/expected/regen_ac_offsets.py",
+  "compiler": [
+   "Apple clang version 17.0.0 (clang-1700.6.4.2) | flags: -std=c++17 -fshort-wchar -Wall -Werror"
+  ],
+  "target_equivalent": "MSVC x64: #pragma pack(4), 2-byte wchar_t (UTF-16LE), 4-byte enums"
+ },
+ "versions": {
+  "1.7": {
+   "source": {
+    "header_url": "https://raw.githubusercontent.com/Shibodd/assetto_corsa_driver/b173eb620776c769dde2117fa5e47e99cb3fbf72/AC_SHM_Driver/shared_file_out.h",
+    "header_sha256": "28bf42168586e7489cbcdb2f983c4cd9d27c69f869935a8982446631c31a7bcf",
+    "retrieved": "2026-10-31",
+    "note": "Kunos の公式ドキュメント（AC Shared Memory Documentation）を C++ に起こしたミラー。フィールドの順序・型・配列長は公式ドキュメントの写しと ACJP LABS のリファレンスに一致する（下記 cross_checked_against）。綴りの違い 1 件はname_fixes で公式の綴りに戻す。",
+    "cross_checked_against": [
+     "https://raw.githubusercontent.com/DhruvGoswami10/AtlasRacing-Product/adede74e81d904a3dcb8ed29594a6591747a9031/dashboard/resources/AC%20Shared%20Memory.txt (Kunos AC Shared Memory Documentation のテキスト写し)",
+     "https://labs.assettocorsa.jp/documents/reference/shared_memory",
+     "https://raw.githubusercontent.com/ac-custom-shaders-patch/acc-extension-apps/1e87293bddf0500ec4b7e6a44b4229b8d8060a19/apps/python/AccExtHelper/sim_info.py",
+     "https://raw.githubusercontent.com/thesupersupersigma/rustyAC/ad37213e5b56173cdc20cfce8ebc641c6ec5e6db/docs/map/telemetry.md (acs.exe 1.16 の解析。smVersion のリテラル \"1.7\" とオフセット)"
+    ],
+    "name_fixes": {
+     "SPageFileStatic": {
+      "trackSplineLength": "trackSPlineLength"
+     }
+    }
+   },
+   "structs": {
+    "SPageFilePhysics": {
+     "size": 580,
+     "fields": [
+      {
+       "name": "packetId",
+       "offset": 0,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "gas",
+       "offset": 4,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "brake",
+       "offset": 8,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "fuel",
+       "offset": 12,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "gear",
+       "offset": 16,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "rpms",
+       "offset": 20,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "steerAngle",
+       "offset": 24,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "speedKmh",
+       "offset": 28,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "velocity",
+       "offset": 32,
+       "kind": "float32",
+       "shape": [
+        3
+       ],
+       "size": 12
+      },
+      {
+       "name": "accG",
+       "offset": 44,
+       "kind": "float32",
+       "shape": [
+        3
+       ],
+       "size": 12
+      },
+      {
+       "name": "wheelSlip",
+       "offset": 56,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "wheelLoad",
+       "offset": 72,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "wheelsPressure",
+       "offset": 88,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "wheelAngularSpeed",
+       "offset": 104,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "tyreWear",
+       "offset": 120,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "tyreDirtyLevel",
+       "offset": 136,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "tyreCoreTemperature",
+       "offset": 152,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "camberRAD",
+       "offset": 168,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "suspensionTravel",
+       "offset": 184,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "drs",
+       "offset": 200,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "tc",
+       "offset": 204,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "heading",
+       "offset": 208,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "pitch",
+       "offset": 212,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "roll",
+       "offset": 216,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "cgHeight",
+       "offset": 220,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "carDamage",
+       "offset": 224,
+       "kind": "float32",
+       "shape": [
+        5
+       ],
+       "size": 20
+      },
+      {
+       "name": "numberOfTyresOut",
+       "offset": 244,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "pitLimiterOn",
+       "offset": 248,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "abs",
+       "offset": 252,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "kersCharge",
+       "offset": 256,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "kersInput",
+       "offset": 260,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "autoShifterOn",
+       "offset": 264,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "rideHeight",
+       "offset": 268,
+       "kind": "float32",
+       "shape": [
+        2
+       ],
+       "size": 8
+      },
+      {
+       "name": "turboBoost",
+       "offset": 276,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "ballast",
+       "offset": 280,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "airDensity",
+       "offset": 284,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "airTemp",
+       "offset": 288,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "roadTemp",
+       "offset": 292,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "localAngularVel",
+       "offset": 296,
+       "kind": "float32",
+       "shape": [
+        3
+       ],
+       "size": 12
+      },
+      {
+       "name": "finalFF",
+       "offset": 308,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "performanceMeter",
+       "offset": 312,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "engineBrake",
+       "offset": 316,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "ersRecoveryLevel",
+       "offset": 320,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "ersPowerLevel",
+       "offset": 324,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "ersHeatCharging",
+       "offset": 328,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "ersIsCharging",
+       "offset": 332,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "kersCurrentKJ",
+       "offset": 336,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "drsAvailable",
+       "offset": 340,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "drsEnabled",
+       "offset": 344,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "brakeTemp",
+       "offset": 348,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "clutch",
+       "offset": 364,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "tyreTempI",
+       "offset": 368,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "tyreTempM",
+       "offset": 384,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "tyreTempO",
+       "offset": 400,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "isAIControlled",
+       "offset": 416,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "tyreContactPoint",
+       "offset": 420,
+       "kind": "float32",
+       "shape": [
+        4,
+        3
+       ],
+       "size": 48
+      },
+      {
+       "name": "tyreContactNormal",
+       "offset": 468,
+       "kind": "float32",
+       "shape": [
+        4,
+        3
+       ],
+       "size": 48
+      },
+      {
+       "name": "tyreContactHeading",
+       "offset": 516,
+       "kind": "float32",
+       "shape": [
+        4,
+        3
+       ],
+       "size": 48
+      },
+      {
+       "name": "brakeBias",
+       "offset": 564,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "localVelocity",
+       "offset": 568,
+       "kind": "float32",
+       "shape": [
+        3
+       ],
+       "size": 12
+      }
+     ]
+    },
+    "SPageFileGraphic": {
+     "size": 296,
+     "fields": [
+      {
+       "name": "packetId",
+       "offset": 0,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "status",
+       "offset": 4,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "session",
+       "offset": 8,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "currentTime",
+       "offset": 12,
+       "kind": "utf16",
+       "shape": [
+        15
+       ],
+       "size": 30
+      },
+      {
+       "name": "lastTime",
+       "offset": 42,
+       "kind": "utf16",
+       "shape": [
+        15
+       ],
+       "size": 30
+      },
+      {
+       "name": "bestTime",
+       "offset": 72,
+       "kind": "utf16",
+       "shape": [
+        15
+       ],
+       "size": 30
+      },
+      {
+       "name": "split",
+       "offset": 102,
+       "kind": "utf16",
+       "shape": [
+        15
+       ],
+       "size": 30
+      },
+      {
+       "name": "completedLaps",
+       "offset": 132,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "position",
+       "offset": 136,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "iCurrentTime",
+       "offset": 140,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "iLastTime",
+       "offset": 144,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "iBestTime",
+       "offset": 148,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "sessionTimeLeft",
+       "offset": 152,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "distanceTraveled",
+       "offset": 156,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "isInPit",
+       "offset": 160,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "currentSectorIndex",
+       "offset": 164,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "lastSectorTime",
+       "offset": 168,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "numberOfLaps",
+       "offset": 172,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "tyreCompound",
+       "offset": 176,
+       "kind": "utf16",
+       "shape": [
+        33
+       ],
+       "size": 66
+      },
+      {
+       "name": "replayTimeMultiplier",
+       "offset": 244,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "normalizedCarPosition",
+       "offset": 248,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "carCoordinates",
+       "offset": 252,
+       "kind": "float32",
+       "shape": [
+        3
+       ],
+       "size": 12
+      },
+      {
+       "name": "penaltyTime",
+       "offset": 264,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "flag",
+       "offset": 268,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "idealLineOn",
+       "offset": 272,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "isInPitLane",
+       "offset": 276,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "surfaceGrip",
+       "offset": 280,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "mandatoryPitDone",
+       "offset": 284,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "windSpeed",
+       "offset": 288,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "windDirection",
+       "offset": 292,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      }
+     ]
+    },
+    "SPageFileStatic": {
+     "size": 684,
+     "fields": [
+      {
+       "name": "smVersion",
+       "offset": 0,
+       "kind": "utf16",
+       "shape": [
+        15
+       ],
+       "size": 30
+      },
+      {
+       "name": "acVersion",
+       "offset": 30,
+       "kind": "utf16",
+       "shape": [
+        15
+       ],
+       "size": 30
+      },
+      {
+       "name": "numberOfSessions",
+       "offset": 60,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "numCars",
+       "offset": 64,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "carModel",
+       "offset": 68,
+       "kind": "utf16",
+       "shape": [
+        33
+       ],
+       "size": 66
+      },
+      {
+       "name": "track",
+       "offset": 134,
+       "kind": "utf16",
+       "shape": [
+        33
+       ],
+       "size": 66
+      },
+      {
+       "name": "playerName",
+       "offset": 200,
+       "kind": "utf16",
+       "shape": [
+        33
+       ],
+       "size": 66
+      },
+      {
+       "name": "playerSurname",
+       "offset": 266,
+       "kind": "utf16",
+       "shape": [
+        33
+       ],
+       "size": 66
+      },
+      {
+       "name": "playerNick",
+       "offset": 332,
+       "kind": "utf16",
+       "shape": [
+        33
+       ],
+       "size": 66
+      },
+      {
+       "name": "sectorCount",
+       "offset": 400,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "maxTorque",
+       "offset": 404,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "maxPower",
+       "offset": 408,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "maxRpm",
+       "offset": 412,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "maxFuel",
+       "offset": 416,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "suspensionMaxTravel",
+       "offset": 420,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "tyreRadius",
+       "offset": 436,
+       "kind": "float32",
+       "shape": [
+        4
+       ],
+       "size": 16
+      },
+      {
+       "name": "maxTurboBoost",
+       "offset": 452,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "deprecated_1",
+       "offset": 456,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "deprecated_2",
+       "offset": 460,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "penaltiesEnabled",
+       "offset": 464,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "aidFuelRate",
+       "offset": 468,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "aidTireRate",
+       "offset": 472,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "aidMechanicalDamage",
+       "offset": 476,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "aidAllowTyreBlankets",
+       "offset": 480,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "aidStability",
+       "offset": 484,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "aidAutoClutch",
+       "offset": 488,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "aidAutoBlip",
+       "offset": 492,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "hasDRS",
+       "offset": 496,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "hasERS",
+       "offset": 500,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "hasKERS",
+       "offset": 504,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "kersMaxJ",
+       "offset": 508,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "engineBrakeSettingsCount",
+       "offset": 512,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "ersPowerControllerCount",
+       "offset": 516,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "trackSPlineLength",
+       "offset": 520,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "trackConfiguration",
+       "offset": 524,
+       "kind": "utf16",
+       "shape": [
+        33
+       ],
+       "size": 66
+      },
+      {
+       "name": "ersMaxJ",
+       "offset": 592,
+       "kind": "float32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "isTimedRace",
+       "offset": 596,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "hasExtraLap",
+       "offset": 600,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "carSkin",
+       "offset": 604,
+       "kind": "utf16",
+       "shape": [
+        33
+       ],
+       "size": 66
+      },
+      {
+       "name": "reversedGridPositions",
+       "offset": 672,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "PitWindowStart",
+       "offset": 676,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      },
+      {
+       "name": "PitWindowEnd",
+       "offset": 680,
+       "kind": "int32",
+       "shape": [],
+       "size": 4
+      }
+     ]
+    }
+   }
+  }
+ }
+}
