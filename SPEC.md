@@ -75,7 +75,7 @@ deploy/      docker compose、GitHub Actions
 - `graphics.status` が LIVE の間だけ書く。PAUSE と REPLAY の間は書かない。
 - 次のときに新しいファイルを始める。ポーズからの再開では分割しない。
   - AC_OFF から LIVE に入ったとき
-  - `graphics.session` または `graphics.sessionIndex` が変わったとき
+  - `graphics.session` が変わったとき（AC1 には ACC の `sessionIndex` に当たるフィールドがない）
   - `graphics.completedLaps` が減ったとき（セッションのリスタート）
 - この条件は、最初の生キャプチャで実際の値の動きを見て確定する。
 
@@ -115,7 +115,7 @@ deploy/      docker compose、GitHub Actions
 
 1. 入力を `(t, x, y, speed)` に揃える。実車は緯度・経度をコースの局所座標（ENU）に変換する。AC は `graphics.carCoordinates` を、後述の座標変換で同じ局所座標に移す。
 2. AC を実車の GPS と同じ約10 Hz に間引く。
-3. 同じ平滑化フィルタをかける。
+3. 同じ平滑化フィルタ（Savitzky–Golay、窓1.5秒）をかける。窓の長さは、実車の G が RaceChrono の計算値と最も近くなる値として選んだ。
 4. 前後G `ax`、横G `ay`、軌跡の曲率 `kappa` を計算する。
 5. 基準線に射影して距離 `s` [m] を求め、距離 1 m 刻みに再標本化する。
 
@@ -232,6 +232,6 @@ Electron、TS のフロントエンド、ライブ表示、Web からのアッ�
 
 ## 未決事項
 
-- fixtures に置く RaceChrono CSV の範囲。実際の走行の位置情報を含むため、リポジトリを公開するなら、数ラップに切り出すか、座標をずらすかを決める。
-- 平滑化フィルタの種類と、ブレーキ開始点などのしきい値。実データで決める。
+- ブレーキ開始点などのしきい値。実データで決める。
+- GPS の測位が乱れた点で出る G のスパイク（横G 2.3 G など）を除く外れ値フィルタ。
 - G-G-V 包絡を作る統計（最大値か、上位パーセンタイルか）。

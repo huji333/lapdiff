@@ -10,8 +10,8 @@ collector/collector.exe
 collector/dist/
 
 # データ（fixtures 以外は置かない）
-inbox/
-data/
+/inbox/
+/data/
 *.parquet
 *.duckdb
 !fixtures/**
