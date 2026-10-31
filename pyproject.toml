@@ -8,6 +8,7 @@ dependencies = [
     "polars>=1.0",
     "pyarrow>=17.0",
     "duckdb>=1.0",
+    "scipy>=1.18.1",
 ]
 
 [dependency-groups]

@@ -1,0 +1,5 @@
+# 局所座標（ENU）の原点。コースごとに固定し、セッションやソースが違っても同じ座標系にする。
+# 値は実車の走行軌跡の重心付近を丸めたもの。変えると既存の Parquet と基準線の座標がずれる。
+track_names = ["Okayama International"]  # RaceChrono の「Track name」
+lat = 34.9145
+lon = 134.2210
