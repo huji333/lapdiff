@@ -1,0 +1,52 @@
+{
+ "generated_by": {
+  "script": "ingest/tests/expected/regen_ac_offsets.py",
+  "compiler": [
+   "Apple clang version 17.0.0 (clang-1700.6.4.2) | flags: -std=c++17 -fshort-wchar -Wall -Werror"
+  ],
+  "target_equivalent": "MSVC x64: #pragma pack(4), 2-byte wchar_t (UTF-16LE), 4-byte enums"
+ },
+ "note": "null はその smVersion の構造体に無いフィールド。sessionIndex は ACC にしか無く、AC1 の SPageFileGraphic には無い。",
+ "versions": {
+  "1.7": {
+   "sizes": {
+    "physics": 580,
+    "graphics": 296,
+    "static": 684
+   },
+   "offsets": {
+    "physics.packetId": {
+     "offset": 0,
+     "kind": "int32",
+     "size": 4
+    },
+    "graphics.packetId": {
+     "offset": 0,
+     "kind": "int32",
+     "size": 4
+    },
+    "graphics.status": {
+     "offset": 4,
+     "kind": "int32",
+     "size": 4
+    },
+    "graphics.session": {
+     "offset": 8,
+     "kind": "int32",
+     "size": 4
+    },
+    "graphics.sessionIndex": null,
+    "graphics.completedLaps": {
+     "offset": 132,
+     "kind": "int32",
+     "size": 4
+    },
+    "static.smVersion": {
+     "offset": 0,
+     "kind": "utf16",
+     "size": 30
+    }
+   }
+  }
+ }
+}
