@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Go
+collector/collector.exe
+collector/dist/
+
+# データ（fixtures 以外は置かない）
+inbox/
+data/
+*.parquet
+*.duckdb
+!fixtures/**
+
+# marimo
+__marimo__/

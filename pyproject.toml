@@ -1,0 +1,28 @@
+[project]
+name = "lapdiff"
+version = "0.1.0"
+description = "実車（RaceChrono）と Assetto Corsa の走行データ比較"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "polars>=1.0",
+    "pyarrow>=17.0",
+    "duckdb>=1.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+analysis = ["marimo>=0.9"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ingest"]
+
+[tool.pytest.ini_options]
+testpaths = ["ingest/tests"]
+
+[tool.ruff]
+line-length = 100

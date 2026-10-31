@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run pytest
+
+  collector:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: collector/go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - run: GOOS=windows GOARCH=amd64 go vet ./...
+      - run: GOOS=windows GOARCH=amd64 go build -o collector.exe .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: collector.exe
+          path: collector/collector.exe
