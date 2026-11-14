@@ -258,3 +258,52 @@ def test_export_no_sections(data_dir, course_dir):
     doc = export.export_course(data_dir, course_dir)
     assert doc["sections"] is None
     assert all(lap["section_times"] is None for lap in doc["laps"])
+
+
+def write_edges_csv(course_dir, s, left, right):
+    rows = "".join(f"{a},{b},{c}\n" for a, b, c in zip(s, left, right))
+    head = "# test\n# attribution = 出典の表記\n# attribution_url = https://example.com/\n"
+    (course_dir / "edges.csv").write_text(head + "s,left_m,right_m\n" + rows, encoding="utf-8")
+
+
+def test_export_edges(data_dir, course_dir):
+    """基準線は +x へ進むので、左の端は +y、右の端は -y に出る。"""
+    s = np.arange(101.0)
+    write_edges_csv(course_dir, s, np.full(101, 3.0), np.full(101, 4.0))
+    doc = export.export_course(data_dir, course_dir)
+    edges = doc["edges"]
+    for side in ("left", "right"):
+        for k in ("x", "y"):
+            assert len(edges[side][k]) == len(doc["refline"]["s"])
+            assert all(np.isfinite(edges[side][k]))
+    assert edges["left"]["x"][50] == pytest.approx(50.0)
+    assert edges["left"]["y"][50] == pytest.approx(3.0)
+    assert edges["right"]["y"][50] == pytest.approx(-4.0)
+    assert edges["attribution"] == "出典の表記"
+    json.dumps(doc, allow_nan=False)
+
+
+def test_export_edges_missing(data_dir, course_dir):
+    assert export.export_course(data_dir, course_dir)["edges"] is None
+
+
+def test_export_edges_grid_mismatch(data_dir, course_dir):
+    s = np.arange(100.0)
+    write_edges_csv(course_dir, s, np.full(100, 3.0), np.full(100, 4.0))
+    with pytest.raises(ValueError, match="格子"):
+        export.export_course(data_dir, course_dir)
+
+
+def test_export_edges_nan(data_dir, course_dir):
+    left = np.full(101, 3.0)
+    left[7] = np.nan
+    write_edges_csv(course_dir, np.arange(101.0), left, np.full(101, 4.0))
+    with pytest.raises(ValueError, match="NaN"):
+        export.export_course(data_dir, course_dir)
+
+
+def test_export_edges_no_attribution(data_dir, course_dir):
+    rows = "".join(f"{a},3,4\n" for a in range(101))
+    (course_dir / "edges.csv").write_text("s,left_m,right_m\n" + rows, encoding="utf-8")
+    with pytest.raises(ValueError, match="出典"):
+        export.export_course(data_dir, course_dir)

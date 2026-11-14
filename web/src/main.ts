@@ -44,6 +44,7 @@ const ui = {
   multi: el<HTMLInputElement>("multi"),
   clear: el<HTMLButtonElement>("clear"),
   error: el<HTMLDivElement>("error"),
+  attribution: el<HTMLParagraphElement>("attribution"),
   map: el<HTMLDivElement>("map"),
   readout: el<HTMLDivElement>("readout"),
   legend: el<HTMLDivElement>("legend"),
@@ -166,9 +167,22 @@ async function openCourse(course: string): Promise<void> {
     ref: doc.default_ref,
     ...route(doc),
   };
+  renderAttribution(doc);
   link.select(null);
   render();
   clearError();
+}
+
+/** 出典の表記（コースの端を空中写真から作ったとき）。表記は edges.csv の頭の行を書き出しがそのまま渡す */
+function renderAttribution(doc: CourseData): void {
+  ui.attribution.hidden = doc.edges == null;
+  if (!doc.edges) return;
+  const a = document.createElement("a");
+  a.href = doc.edges.attribution_url;
+  a.textContent = doc.edges.attribution;
+  a.target = "_blank";
+  a.rel = "noopener";
+  ui.attribution.replaceChildren("コースの端：", a);
 }
 
 function render(): void {

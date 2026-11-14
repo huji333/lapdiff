@@ -44,6 +44,10 @@
   区間の格子に 1 点でも欠けがあれば null。境界を共有するので、全区間の合計は `t[grid_max] - t[0]` に一致する。
   区間ごとの自己ベストは web view が `section_times` の最小から求める（書き出さない）。
 - `min_diff_s`：区間タイムの差をこれ未満なら「差なし」とみなすしきい値 [s]（仮の値）。web view が読む。
+- `edges`：コースの端（`track/<course>/edges.csv`、`ingest.edges` が空中写真から作る）を、基準線の格子の各 `s` で
+  左右の端の点 `{"left": {"x", "y"}, "right": {"x", "y"}, "attribution", "attribution_url"}` にしたもの。
+  出典の表記は `edges.csv` の頭の `# attribution = ...` をそのまま渡す。`edges.csv` がなければ null。
+  端は白線・縁石の内側で、写真と GPS の位置合わせの誤差で ±1〜2 m ずれうる。
 - データの場所に別のコースの周が混ざっていれば `data.check_length` で失敗させる。
   `s` が格子の整数でない行、同じ周で `s` が重なる行、NaN も失敗させる。
 """
@@ -58,7 +62,7 @@ import polars as pl
 
 from analysis import data
 from ingest.corners import load_corners
-from ingest.track import TRACK_DIR, load_refline
+from ingest.track import TRACK_DIR, frame, load_refline
 
 # 丸めの桁（小数点以下）。JSON の大きさを抑える
 BRAKE_G = 0.3
@@ -83,16 +87,37 @@ def _column(
 
 def lateral_offset(line, s: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """点 (x, y) の、基準線上の距離 `s` の点からの横のずれ [m]。進行方向の左が正。"""
-    def at(v: np.ndarray, col: np.ndarray) -> np.ndarray:
-        # 基準線は閉じているので、全長を周期として補間する
-        return np.interp(v % line.length, line.s, col, period=line.length)
+    rx, ry, nx, ny = frame(line, s)
+    return (x - rx) * nx + (y - ry) * ny
 
-    rx, ry = at(s, line.x), at(s, line.y)
-    # 接線は前後 1 m の点の差
-    tx = at(s + 1.0, line.x) - at(s - 1.0, line.x)
-    ty = at(s + 1.0, line.y) - at(s - 1.0, line.y)
-    norm = np.hypot(tx, ty)
-    return ((y - ry) * tx - (x - rx) * ty) / norm
+
+def edges(line, course_dir: Path) -> dict | None:
+    """`edges.csv` の左右の端を、基準線の格子の点 (x, y) にする。ファイルがなければ None。"""
+    path = course_dir / "edges.csv"
+    if not path.exists():
+        return None
+    df = pl.read_csv(path, comment_prefix="#", schema={"s": pl.Float64, "left_m": pl.Float64, "right_m": pl.Float64})
+    s = df["s"].to_numpy()
+    if len(s) != len(line.s) or not np.allclose(s, line.s, atol=1e-3):
+        raise ValueError(f"{path} の s が基準線の格子と違う（基準線を作り直したら python -m ingest.edges も回す）")
+    left, right = df["left_m"].to_numpy(), df["right_m"].to_numpy()
+    if not (np.isfinite(left).all() and np.isfinite(right).all()):
+        raise ValueError(f"{path} に NaN がある")
+    meta = {}
+    for row in path.read_text(encoding="utf-8").splitlines():
+        if row.startswith("# ") and " = " in row:
+            k, v = row[2:].split(" = ", 1)
+            meta[k] = v
+    missing = {"attribution", "attribution_url"} - meta.keys()
+    if missing:
+        raise ValueError(f"{path} の頭に出典の行 {sorted(missing)} がない（python -m ingest.edges で作り直す）")
+    rx, ry, nx, ny = frame(line, line.s)
+
+    def pts(off: np.ndarray) -> dict:
+        return {"x": [round(float(v), 2) for v in rx + off * nx], "y": [round(float(v), 2) for v in ry + off * ny]}
+
+    return {"left": pts(left), "right": pts(-right),
+            "attribution": meta["attribution"], "attribution_url": meta["attribution_url"]}
 
 
 def brake_point(ax: list[float | None], lo: int, hi: int) -> tuple[int | None, float | None]:
@@ -219,6 +244,7 @@ def export_course(data_dir: Path, course_dir: Path) -> dict:
             "x": [round(float(v), 2) for v in line.x],
             "y": [round(float(v), 2) for v in line.y],
         },
+        "edges": edges(line, course_dir),
         "corners": None if corners is None else [
             {
                 "id": c.id,

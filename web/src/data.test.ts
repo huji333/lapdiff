@@ -131,11 +131,12 @@ describe("基準線", () => {
 });
 
 describe("checkCourse", () => {
-  const doc = (laps: Lap[]): CourseData => ({
+  const doc = (laps: Lap[], edges: CourseData["edges"] = null): CourseData => ({
     course: "c",
     length: 3.5,
     grid_max: 3,
     refline: { s: [0, 1], x: [0, 1], y: [0, 1] },
+    edges,
     corners: null,
     sections: null,
     min_diff_s: 0.05,
@@ -147,6 +148,13 @@ describe("checkCourse", () => {
   it("周の配列が grid_max + 1 でなければ失敗させる", () => {
     expect(() => checkCourse(doc([lap("a", [0, 1, 2, 3])]))).not.toThrow();
     expect(() => checkCourse(doc([lap("a", [0, 1, 2])]))).toThrow(/a の t の長さが 3/);
+  });
+
+  it("コースの端の長さが基準線と違えば失敗させる", () => {
+    const e = (n: number) => ({ x: Array(n).fill(0), y: Array(n).fill(0) });
+    const edges = (n: number) => ({ left: e(2), right: e(n), attribution: "", attribution_url: "" });
+    expect(() => checkCourse(doc([], edges(2)))).not.toThrow();
+    expect(() => checkCourse(doc([], edges(3)))).toThrow(/コースの端（right）/);
   });
 });
 

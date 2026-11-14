@@ -71,11 +71,29 @@ export interface Refline {
   y: number[];
 }
 
+export interface Point2 {
+  x: number[];
+  y: number[];
+}
+
+/**
+ * コースの端（analysis.export の edges）。基準線の格子の各 s での左右の端の点。
+ * 空中写真から取り出した白線・縁石の内側で、±1〜2 m ずれうる。attribution は出典の表記
+ */
+export interface Edges {
+  left: Point2;
+  right: Point2;
+  attribution: string;
+  attribution_url: string;
+}
+
 export interface CourseData {
   course: string;
   length: number;
   grid_max: number;
   refline: Refline;
+  /** track/<course>/edges.csv がなければ null */
+  edges: Edges | null;
   corners: Corner[] | null;
   sections: Section[] | null;
   default_ref: string | null;
@@ -113,6 +131,14 @@ export function checkCourse(doc: CourseData): void {
   const r = doc.refline;
   if (r.x.length !== r.s.length || r.y.length !== r.s.length) {
     throw new Error(`${doc.course}: 基準線の s, x, y の長さが違う`);
+  }
+  if (doc.edges) {
+    for (const side of ["left", "right"] as const) {
+      const e = doc.edges[side];
+      if (e.x.length !== r.s.length || e.y.length !== r.s.length) {
+        throw new Error(`${doc.course}: コースの端（${side}）の長さが基準線と違う`);
+      }
+    }
   }
   for (const lap of doc.laps) {
     for (const key of ["t", "speed_kmh", "x", "y", "ax", "ay", "offset", "throttle", "brake"] as const) {

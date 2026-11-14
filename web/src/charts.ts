@@ -3,7 +3,17 @@
 
 import * as Plot from "@observablehq/plot";
 import * as d3 from "d3";
-import { fitDomains, gPoints, pointAt, type Corner, type CourseData, type Lap, type Range, type Series } from "./data";
+import {
+  fitDomains,
+  gPoints,
+  pointAt,
+  type Corner,
+  type CourseData,
+  type Edges,
+  type Lap,
+  type Range,
+  type Series,
+} from "./data";
 
 export const HIGHLIGHT = "#d62728";
 const CORNER_GRAY = "#808080";
@@ -69,6 +79,40 @@ function asChart(plot: (SVGSVGElement | HTMLElement) & Plot.Plot): Chart {
   return { svg: plot, x: scaleOf(plot, "x"), y: scaleOf(plot, "y") };
 }
 
+const ROAD_FILL = "#ececec";
+const EDGE_STROKE = "#a8a8a8";
+const REFLINE_STROKE = "#c4c4c4";
+
+/**
+ * コースの路面（左右の端の間を薄く塗った面）と端の細い線。周の線より先に（下に）置く。
+ * `idx` は基準線の格子の添字。null なら 1 周全体を閉じた輪として描く（左右の輪を evenodd で塗り、間だけを面にする）。
+ * `idx` があればその範囲の左の端を進み、右の端を戻る 1 つの多角形にする。
+ */
+function roadMarks(edges: Edges | null, idx: number[] | null): Plot.Markish[] {
+  if (!edges) return [];
+  const { left, right } = edges;
+  const ii = idx ?? d3.range(left.x.length);
+  const pick = (p: { x: number[]; y: number[] }) => ii.map((i) => [p.x[i]!, p.y[i]!] as const);
+  const l = pick(left);
+  const r = pick(right);
+  const fill: Plot.RenderFunction = (_index, scales) => {
+    const fx = scales.x!;
+    const fy = scales.y!;
+    const ring = (pts: (readonly [number, number])[]) =>
+      "M" + pts.map(([x, y]) => `${fx(x)},${fy(y)}`).join("L") + "Z";
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", idx == null ? ring(l) + ring(r) : ring([...l, ...[...r].reverse()]));
+    path.setAttribute("fill", ROAD_FILL);
+    path.setAttribute("fill-rule", "evenodd");
+    return path;
+  };
+  const edgeLine = (pts: (readonly [number, number])[]) => {
+    const closed = idx == null ? [...pts, pts[0]!] : pts;
+    return Plot.line(closed, { x: (d) => d[0], y: (d) => d[1], stroke: EDGE_STROKE, strokeWidth: 1 });
+  };
+  return [fill, edgeLine(pick(left)), edgeLine(pick(right))];
+}
+
 /**
  * 高さを決めて x と y を同じ縮尺（1 m あたりの px）で描くときのグラフの幅。
  * Plot の aspectRatio は既定の余白から高さを決め、指定した margin を左右の幅から引かないため使わない。
@@ -123,8 +167,11 @@ export function courseMap(
       x: { domain: [x0 - pad, x1 + pad], axis: null },
       y: { domain: [y0 - pad, y1 + pad], axis: null },
       marks: [
-        Plot.line(line.x, { x: Plot.identity, y: line.y, stroke: "#d0d0d0", strokeWidth: 7 }),
+        // ミニセクターの色は路面より太い帯にして路面の下に置き、路面の縁取りとして見せる
         Plot.line(painted, { x: "x", y: "y", z: "i", stroke: "color", strokeWidth: 9 }),
+        ...roadMarks(doc.edges, null),
+        // 基準線は実車の周の平均で、コースの中心ではない。路面と紛れないよう細い線にする
+        Plot.line(line.x, { x: Plot.identity, y: line.y, stroke: REFLINE_STROKE, strokeWidth: 1 }),
         ...laps.map((lap) => Plot.line(lap.x, { x: Plot.identity, y: lap.y, ...style(lap) })),
         Plot.dot(ticks, { x: "x", y: "y", symbol: "plus", stroke: "black", r: 4 }),
         Plot.text(ticks, { x: "x", y: "y", text: (d) => `${d.s}`, dx: 6, dy: -8, textAnchor: "start" }),
@@ -267,7 +314,7 @@ export function ggChart(laps: Lap[], style: (lap: Lap) => LapStyle, range: Range
 }
 
 /**
- * コーナーの拡大図。s の範囲 `win` の基準線（太い灰色）と、重ねる周の走行ラインを同じ縮尺で描く。
+ * コーナーの拡大図。s の範囲 `win` の路面（コースの端があれば）・基準線（細い破線）と、重ねる周の走行ラインを同じ縮尺で描く。
  * 区間の始点・終点に印を付け、各周のボトム速度（corner_stats の s_vmin）の位置に点と速度を出す。
  */
 export function cornerMap(
@@ -285,6 +332,15 @@ export function cornerMap(
   const ry = idx.map((i) => line.y[i]!);
   const xs = [...rx];
   const ys = [...ry];
+  // コースの端も拡大図に収める
+  if (doc.edges) {
+    for (const side of [doc.edges.left, doc.edges.right]) {
+      for (const i of idx) {
+        xs.push(side.x[i]!);
+        ys.push(side.y[i]!);
+      }
+    }
+  }
   const cut = (v: Series) => v.map((p, s) => (s >= win[0] && s <= win[1] ? p : null));
   for (const l of laps) {
     for (let s = win[0]; s <= win[1]; s++) {
@@ -323,7 +379,9 @@ export function cornerMap(
       x: { domain: dom.x, axis: null },
       y: { domain: dom.y, axis: null },
       marks: [
-        Plot.line(rx, { x: Plot.identity, y: ry, stroke: "#e6e6e6", strokeWidth: 10, strokeLinecap: "round" }),
+        ...roadMarks(doc.edges, idx),
+        // 基準線は実車の周の平均で、コースの中心ではない。路面と紛れないよう細い線にする
+        Plot.line(rx, { x: Plot.identity, y: ry, stroke: REFLINE_STROKE, strokeWidth: 1, strokeDasharray: "4,3" }),
         Plot.arrow([{ a, b }], {
           x1: (d) => d.a.x,
           y1: (d) => d.a.y,
