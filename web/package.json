@@ -1,0 +1,24 @@
+{
+  "name": "lapdiff-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "data": "./scripts/fixtures.sh"
+  },
+  "dependencies": {
+    "@observablehq/plot": "0.6.17",
+    "d3": "7.9.0"
+  },
+  "devDependencies": {
+    "@types/d3": "7.4.3",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "5.0.5"
+  }
+}
