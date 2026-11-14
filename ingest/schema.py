@@ -5,6 +5,7 @@ from pathlib import Path
 import polars as pl
 
 from ingest.derive import by_distance
+from ingest.laps import with_validity
 from ingest.track import Refline
 
 COMMON_SCHEMA = pl.Schema(
@@ -36,16 +37,38 @@ JOIN_KEYS = ["source", "session_id", "lap", "t"]
 TIMED_COLUMNS = ["lap", "t", "x", "y", "speed", "ax", "ay", "kappa", "steer", "throttle", "brake"]
 
 
+# 周を比べてよいとみなす条件（`to_common`）
+COVER_TOL = 5.0  # 計測線から計測線まで覆っているとみなす s の端の余裕 [m]
+MAX_GAP = 10.0  # 使った点どうしの s の間隔の上限 [m]。2026-10-12 の有効な周では最大 4.5 m
+
+
 def to_common(
-    timed: pl.DataFrame, laps: pl.DataFrame, line: Refline, source: str, session_id: str
-) -> tuple[pl.DataFrame, dict[str, int]]:
-    """周ごとの時刻格子を、基準線の距離の格子にして共通スキーマにする（実車と AC で共通）。"""
+    timed: pl.DataFrame,
+    laps: pl.DataFrame,
+    line: Refline,
+    source: str,
+    session_id: str,
+    usable: pl.Expr | None = None,
+) -> tuple[pl.DataFrame, pl.DataFrame, dict[str, int]]:
+    """周ごとの時刻格子を、基準線の距離の格子にして共通スキーマにする（実車と AC で共通）。
+
+    `lap_valid` はここで判定し直す（`ingest.laps.with_validity`）。比べてよい周は次をすべて満たすもの。
+    - 基準線を `0〜全長` まで覆っている（端の余裕 `COVER_TOL`）
+    - 使った点どうしの `s` の間隔が `MAX_GAP` 以下（GPS の欠けや捨てた点を補間で埋めていない）
+    - ソースが渡す `usable`（AC では自身のラップタイムとの一致）
+    返り値は共通スキーマの表、`covered`・`max_gap_m` を足した周の表、使わなかった点の件数。
+    """
     if timed.columns != TIMED_COLUMNS:
         raise ValueError(f"列は {TIMED_COLUMNS}: {timed.columns}")
     with_abs = timed.join(
         laps.select("lap", "t_start"), on="lap", how="left", maintain_order="left"
     ).with_columns(t_abs=pl.col("t") + pl.col("t_start")).drop("t_start")
-    d, dropped = by_distance(with_abs, line)
+    d, dropped, stats = by_distance(with_abs, line)
+    laps = laps.join(stats, on="lap", how="left", maintain_order="left").with_columns(
+        covered=(pl.col("s_first") <= COVER_TOL) & (pl.col("s_last") >= line.length - COVER_TOL),
+    ).drop("s_first", "s_last")
+    ok = pl.col("covered") & (pl.col("max_gap_m") <= MAX_GAP)
+    laps = with_validity(laps, ok if usable is None else ok & usable)
     common = (
         d.with_columns(
             source=pl.lit(source),
@@ -56,7 +79,7 @@ def to_common(
         .select(COMMON_SCHEMA.names())
     )
     check_common(common)
-    return common, dropped
+    return common, laps, dropped
 
 
 def check_common(df: pl.DataFrame) -> None:

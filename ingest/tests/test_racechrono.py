@@ -171,3 +171,26 @@ def test_best_lap_fixture_on_distance_grid():
     assert lap["t"].max() == pytest.approx(131.468, abs=0.3)
     assert lap["dist_norm"].max() <= 1.0
     assert s.dropped == {"off_line": 0, "not_advancing": 0}
+
+
+def test_gps_dropout_invalidates_lap(tmp_path):
+    """GPS が 6 s 欠けた周は、補間で埋めた区間を比べられないので無効になる。"""
+    lines = BEST.read_text(encoding="utf-8").splitlines(keepends=True)
+    h = next(i for i, line in enumerate(lines) if line.startswith("timestamp,")) + 3
+    t0 = float(lines[h].split(",", 1)[0])
+    names = lines[h - 3].rstrip("\r\n").split(",")
+    lat, lon = names.index("latitude"), names.index("longitude")
+    out = []
+    for line in lines[h:]:
+        cells = line.rstrip("\r\n").split(",")
+        if 60 <= float(cells[0]) - t0 < 66:
+            cells[lat] = cells[lon] = ""
+        out.append(",".join(cells) + "\r\n")
+    p = tmp_path / "dropout.csv"
+    p.write_text("".join(lines[:h] + out), encoding="utf-8", newline="")
+    s = ingest(p)
+    lap10 = s.laps.filter(pl.col("lap") == 10)
+    assert lap10["closed"].item() and lap10["covered"].item()
+    assert lap10["max_gap_m"].item() > 100
+    assert not lap10["lap_valid"].item()
+    assert not s.common.filter(pl.col("lap") == 10)["lap_valid"].any()

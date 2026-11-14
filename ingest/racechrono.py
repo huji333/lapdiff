@@ -8,7 +8,7 @@
 - タイムスタンプが重複した行は、最初の行だけを残す。
 - ラップは `lap_number` で分ける。最初の周より前の空欄はアウトラップとして `lap = 0` にする。
   各周の開始時刻はその周の最初の行（RaceChrono が計測線の通過時刻に行を挿入している）。
-- `lap_valid`：`ingest.laps.lap_table` の規則（閉じた周で、最速周の 107% 以内）。
+- `lap_valid`：`ingest.laps` と `ingest.schema.to_common` の規則。
 - 局所座標：`track/<course>/origin.toml` の固定原点を使う ENU（x 東、y 北 [m]）。
   セッションをまたいで同じ座標系にし、基準線と重ねられるようにするため、最初の測位点は使わない。
 - `session_id`：最初の行の時刻（UTC）を `%Y%m%dT%H%M%SZ` で表したもの。
@@ -234,14 +234,14 @@ def ingest_timed(path: Path, track_dir: Path = TRACK_DIR) -> Timed:
 
 def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
     tm = ingest_timed(path, track_dir)
-    common, dropped = to_common(
+    common, laps, dropped = to_common(
         tm.timed, tm.laps, load_refline(tm.course_dir), SOURCE, tm.session_id
     )
     return Session(
         common=common,
         timed=tm.timed,
         raw=tm.raw,
-        laps=tm.laps,
+        laps=laps,
         n_duplicates=tm.n_duplicates,
         n_no_fix=tm.n_no_fix,
         dropped=dropped,
