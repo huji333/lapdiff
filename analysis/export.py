@@ -14,18 +14,26 @@
   全組み合わせを先に計算すると周の数の 2 乗の大きさになる。
   `t` は 1e-3 s に丸めて書くので、web view の `dt` は `data.time_delta` と最大 1e-3 s ずれる
   （小数点以下 3 桁で表示すると最後の桁が違うことがある）。
-- web view（`web/src/data.ts`）には、Python の判定を写した処理がほかにもある。
-  `data.final_delta`（`finalDelta`）と、`analysis/view1.py` の周の絞り込み
-  （一覧に出す周 `shownLaps`、基準ラップの候補 `refCandidates`、既定で重ねる周 `defaultSelection`）。
-  どちらかを変えたら、もう片方も合わせる。
+- web view（`web/src/data.ts`）に写した Python の処理の一覧（ここだけに書く）。どちらかを変えたら、もう片方も合わせる。
+  - `timeDelta`・`finalDelta`：`data.time_delta`・`data.final_delta`。
+  - `sectorTimes`：`section_times` と同じ求め方を、任意の境界（50 m のミニセクター）で行う。
+    基準ラップには依存せず、自己ベストとの比較（コース図の色）に使う。
+  - `shownLaps`・`refCandidates`・`defaultSelection`：`analysis/view1.py` の周の絞り込み
+    （一覧に出す周、基準ラップの候補、既定で重ねる周）。
+  - `SCHEMA` と、`checkCourse` が確かめるチャンネルの一覧（`CHANNELS`）：ここの `SCHEMA` と `DIGITS` のキー。
+  `web/src/fixtures/contract.json` は小さいコースの書き出しで、pytest（`test_export.py`）が今の出力と一致することを、
+  vitest（`data.test.ts`）がそれを読んで `checkCourse` と写した処理の結果を確かめる。
+- `schema`：書き出す形の版 `SCHEMA`。web view は版が違えば「npm run data で書き出し直す」と失敗させる。
+- `channels`：周ごとの配列のキー（`DIGITS` のキーの並び）。web view が周のキーと長さを確かめるのに使う。
 - `throttle`・`brake`：直接計測したペダル（0〜1）。AC にはあり、CAN のない実車では全部 null。
 - `offset` [m]：同じ `s` での基準線からの横のずれ。進行方向の左を正にする（`ay` と同じ向き）。
   基準線は実車の有効な周を平均した線で、コースの中心でも縁でもない。ライン取りの差を比べるための原点。
-- `corner_stats`：周ごと・コーナーごと（`corners` と同じ順）の区間タイム、ボトム速度とその位置、
-  区間の始点と終点の速度。区間の格子に 1 点でも欠けがあれば、そのコーナーの値は全部 null にする
-  （欠けた所の値を補わない。SPEC 原則 6）。
+- `corner_stats`：周ごと・コーナーごとのボトム速度とその位置、区間の始点と終点の速度、ブレーキ開始点と最大減速度。
+  コーナーの `id` をキーにした object。区間は `sections` の `kind = "corner"` の区間で、コーナーの区間タイムは
+  `section_times` のその区間の値だけにする（同じコーナーに 2 つの秒数を出さない）。
+  区間の格子に 1 点でも欠けがあれば、そのコーナーの値は全部 null にする（欠けた所の値を補わない。SPEC 原則 6）。
 - ブレーキ開始点 `s_brake` と最大減速度 `ax_min`（SPEC「コーナーごとの指標」の GPS のみでの出し方）：
-  前のコーナーの終点（なければ計測線）と、区間の始点の `BRAKE_LOOKBACK` m 手前のうち後の方から、
+  前のコーナーの区間の終点（なければ計測線）と、区間の始点の `BRAKE_LOOKBACK` m 手前のうち後の方から、
   ボトムの位置までを探す。`ax_min` はその範囲の `ax` の最小値。`ax_min` が `-BRAKE_G` を下回れば、
   その点から手前へ `ax < -BRAKE_G` が続く最初の点を `s_brake` にする。下回らなければ `s_brake` は null
   （ブレーキなし。`ax_min` は出す）。範囲の `ax` に欠けがあれば両方 null。
@@ -39,7 +47,9 @@
   境界は `s` の格子の整数で、前の区間の終点と次の区間の始点が同じ点になる。
   長さが `SECTION_MERGE` m 以下の隙間は直線にせず、前のコーナーの終点を延ばして吸収する（計測線の直後なら
   最初のコーナーの始点を 0 にする）。区間ごとの損失を順位にするとき、数 m の区間が並ぶのを避ける。
-  `corner_stats` の区間（`corners.toml` のまま）とは、延ばした分だけ違うことがある。
+  コーナーの区間（`kind = "corner"`）はコーナーの定義を兼ね、`s_apex`（なければ null）と `side` を持つ。
+  `side` は `corners.toml` の `r_apex` の符号から決めた向き（`"left"`／`"right"`、`r_apex` がなければ null）。
+  コーナーの境界は `corners.toml` の値ではなく、この延ばした境界だけを書き出す。
 - `section_times`：周ごと・区間ごと（`sections` と同じ順）の区間タイム `t[s_end] - t[s_start]`。
   区間の格子に 1 点でも欠けがあれば null。境界を共有するので、全区間の合計は `t[grid_max] - t[0]` に一致する。
   区間ごとの自己ベストは web view が `section_times` の最小から求める（書き出さない）。
@@ -66,9 +76,11 @@ from analysis import data
 from ingest.corners import load_corners
 from ingest.track import TRACK_DIR, frame, load_refline
 
-# 丸めの桁（小数点以下）。JSON の大きさを抑える
+# 書き出す形の版。形を変えたら上げ、web/src/data.ts の SCHEMA も同じ値にする
+SCHEMA = 1
 BRAKE_G = 0.3
 BRAKE_LOOKBACK = 250.0
+# 周ごとのチャンネルと丸めの桁（小数点以下）。JSON の大きさを抑える。キーの並びを `channels` として書き出す
 DIGITS = {"t": 3, "speed_kmh": 2, "x": 2, "y": 2, "ax": 3, "ay": 3, "offset": 2, "throttle": 3, "brake": 3}
 # 区間タイムの差を「差なし」とみなすしきい値 [s]。実車の GPS では低速コーナーの区間タイムが 0.05〜0.1 s ぶれる
 MIN_DIFF_S = 0.05
@@ -166,27 +178,26 @@ def brake_point(ax: list[float | None], lo: int, hi: int) -> tuple[int | None, f
     return lo + k, ax_min
 
 
-def corner_stats(lap: dict, corners) -> list[dict]:
-    """`lap` は書き出す形の周（s の格子の添字で並んだ配列）。"""
-    out = []
-    prev_end = 0.0
-    for c in corners:
-        a, b = math.ceil(c.s_start), math.floor(c.s_end)
+def corner_stats(lap: dict, secs: list[dict]) -> dict[str, dict]:
+    """`lap` は書き出す形の周。`secs` の `kind = "corner"` の区間ごとの値を、コーナーの `id` で引ける形にする。"""
+    out = {}
+    prev_end = 0
+    for sec in secs:
+        if sec["kind"] != "corner":
+            continue
+        a, b = sec["s_start"], sec["s_end"]
         t = lap["t"][a : b + 1]
         v = lap["speed_kmh"][a : b + 1]
-        stat = {"id": c.id, "t_section": None, "v_min": None, "s_vmin": None,
-                "v_entry": None, "v_exit": None, "s_brake": None, "ax_min": None}
+        stat = {"v_min": None, "s_vmin": None, "v_entry": None, "v_exit": None,
+                "s_brake": None, "ax_min": None}
         if all(x is not None for x in t) and all(x is not None for x in v):
             k = min(range(len(v)), key=v.__getitem__)
-            lo = math.ceil(max(prev_end, c.s_start - BRAKE_LOOKBACK))
+            lo = math.ceil(max(prev_end, a - BRAKE_LOOKBACK))
             s_brake, ax_min = brake_point(lap["ax"], lo, a + k)
-            stat.update(
-                t_section=round(t[-1] - t[0], DIGITS["t"]),
-                v_min=v[k], s_vmin=a + k, v_entry=v[0], v_exit=v[-1],
-                s_brake=s_brake, ax_min=ax_min,
-            )
-        out.append(stat)
-        prev_end = c.s_end
+            stat.update(v_min=v[k], s_vmin=a + k, v_entry=v[0], v_exit=v[-1],
+                        s_brake=s_brake, ax_min=ax_min)
+        out[sec["id"]] = stat
+        prev_end = b
     return out
 
 
@@ -203,13 +214,21 @@ def sections(corners, grid_max: int) -> list[dict]:
             out[-1]["s_end"] = a
         else:
             a = 0
-        out.append({"id": c.id, "kind": "corner", "name": c.name, "s_start": a, "s_end": b})
+        out.append({"id": c.id, "kind": "corner", "name": c.name, "s_start": a, "s_end": b,
+                    "s_apex": None if math.isnan(c.s_apex) else c.s_apex, "side": side(c.r_apex)})
         prev_end = b
     if grid_max - prev_end > SECTION_MERGE:
         out.append(_straight(out[-1]["id"] if out else None, None, prev_end, grid_max))
     elif out:
         out[-1]["s_end"] = grid_max
     return out
+
+
+def side(r_apex: float) -> str | None:
+    """`corners.toml` の `r_apex` の符号（正が左）からコーナーの向き。`r_apex` がなければ None。"""
+    if math.isnan(r_apex):
+        return None
+    return "left" if r_apex > 0 else "right"
 
 
 def _straight(prev: str | None, nxt: str | None, a: int, b: int) -> dict:
@@ -263,11 +282,12 @@ def export_course(data_dir: Path, course_dir: Path) -> dict:
         meta["t_end"] = round(meta["t_end"], DIGITS["t"])
         for col, digits in DIGITS.items():
             meta[col] = _column(idx, g[col].to_list(), digits, n)
-        meta["corner_stats"] = None if corners is None else corner_stats(meta, corners)
+        meta["corner_stats"] = None if secs is None else corner_stats(meta, secs)
         meta["section_times"] = None if secs is None else section_times(meta, secs)
         out_laps.append(meta)
 
     return {
+        "schema": SCHEMA,
         "course": course_dir.name,
         "length": line.length,
         "grid_max": grid_max,
@@ -277,20 +297,11 @@ def export_course(data_dir: Path, course_dir: Path) -> dict:
             "y": [round(float(v), 2) for v in line.y],
         },
         "edges": edges(line, course_dir),
-        "corners": None if corners is None else [
-            {
-                "id": c.id,
-                "name": c.name,
-                "s_start": c.s_start,
-                "s_apex": None if math.isnan(c.s_apex) else c.s_apex,
-                "s_end": c.s_end,
-            }
-            for c in corners
-        ],
         "sections": secs,
         "default_ref": data.default_ref(laps),
         "brake_g": BRAKE_G,
         "min_diff_s": MIN_DIFF_S,
+        "channels": list(DIGITS),
         "laps": out_laps,
     }
 

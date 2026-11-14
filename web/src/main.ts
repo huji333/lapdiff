@@ -17,6 +17,7 @@ import {
   type Paint,
 } from "./charts";
 import {
+  cornersOf,
   defaultComparison,
   defaultSelection,
   finalDelta,
@@ -254,7 +255,7 @@ function render(): void {
   if (state.view === "corner") {
     ui.panel.root.hidden = true;
     link.reset();
-    const corner = doc.corners?.find((c) => c.id === state!.corner);
+    const corner = cornersOf(doc).find((c) => c.id === state!.corner);
     if (!corner) {
       message(ui.corner.map, "このコースには corners.toml がないので、コーナーのビューは出せない");
       return;
@@ -364,7 +365,7 @@ function render(): void {
  */
 function route(doc: CourseData): Pick<State, "view" | "corner"> {
   const [view, id] = window.location.hash.replace(/^#/, "").split("/");
-  const corners = doc.corners ?? [];
+  const corners = cornersOf(doc);
   const corner = corners.find((c) => c.id === id)?.id ?? state?.corner ?? corners[0]?.id ?? null;
   return { view: view === "corner" ? "corner" : "overview", corner };
 }
@@ -372,7 +373,7 @@ function route(doc: CourseData): Pick<State, "view" | "corner"> {
 /** コーナーの記号のボタン（コーナーのビューだけ）。押すとそのコーナーの URL に移る。 */
 function renderCornerBar(doc: CourseData): void {
   ui.cornerBar.replaceChildren(
-    ...(doc.corners ?? []).map((c) => {
+    ...cornersOf(doc).map((c) => {
       const b = document.createElement("button");
       b.type = "button";
       b.textContent = c.id;

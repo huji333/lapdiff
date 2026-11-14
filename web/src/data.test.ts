@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import contract from "./fixtures/contract.json";
 import {
   bearingAt,
-  turnAngle,
-  turnSide,
   bestPool,
+  CHANNELS,
+  SCHEMA,
+  cornersOf,
+  sectionTime,
   lossVsBest,
   miniBounds,
   minPerIndex,
@@ -135,12 +138,13 @@ describe("基準線", () => {
 
 describe("checkCourse", () => {
   const doc = (laps: Lap[], edges: CourseData["edges"] = null): CourseData => ({
+    schema: SCHEMA,
+    channels: [...CHANNELS],
     course: "c",
     length: 3.5,
     grid_max: 3,
     refline: { s: [0, 1], x: [0, 1], y: [0, 1] },
     edges,
-    corners: null,
     sections: null,
     min_diff_s: 0.05,
     default_ref: null,
@@ -153,6 +157,18 @@ describe("checkCourse", () => {
     expect(() => checkCourse(doc([lap("a", [0, 1, 2])]))).toThrow(/a の t の長さが 3/);
   });
 
+  it("版が違えば書き出し直すよう失敗させる", () => {
+    const { schema: _, ...old } = doc([]);
+    expect(() => checkCourse(old as CourseData)).toThrow(/版が なし.*npm run data で書き出し直す/);
+    expect(() => checkCourse({ ...doc([]), schema: SCHEMA + 1 })).toThrow(/npm run data/);
+  });
+
+  it("チャンネルが違えば失敗させる", () => {
+    expect(() => checkCourse({ ...doc([]), channels: ["t", "speed_kmh"] })).toThrow(/チャンネル/);
+    const { brake: _, ...noBrake } = lap("a", [0, 1, 2, 3]);
+    expect(() => checkCourse(doc([noBrake as Lap]))).toThrow(/a の brake の長さが undefined/);
+  });
+
   it("コースの端の長さが基準線と違えば失敗させる", () => {
     const e = (n: number) => ({ x: Array(n).fill(0), y: Array(n).fill(0) });
     const edges = (n: number) => ({ left: e(2), right: e(n), kerbs: [], attribution: "", attribution_url: "" });
@@ -160,13 +176,23 @@ describe("checkCourse", () => {
     expect(() => checkCourse(doc([], edges(3)))).toThrow(/コースの端（right）/);
   });
 
-  it("縁石がない・長さが違えば失敗させる", () => {
+  it("縁石の長さが違えば失敗させる", () => {
     const e = { x: [0, 0], y: [0, 0] };
-    const base = { left: e, right: e, attribution: "", attribution_url: "" };
-    const old = { ...base } as unknown as CourseData["edges"];
-    expect(() => checkCourse(doc([], old))).toThrow(/kerbs がない/);
-    const bad = { ...base, kerbs: [{ side: "left" as const, i: [0, 1], x: [0], y: [0, 0] }] };
+    const bad = { left: e, right: e, attribution: "", attribution_url: "", kerbs: [{ side: "left" as const, i: [0, 1], x: [0], y: [0, 0] }] };
     expect(() => checkCourse(doc([], bad))).toThrow(/縁石（left）/);
+  });
+
+  it("区間ごと・コーナーごとの値が区間とコーナーに揃っていなければ失敗させる", () => {
+    const sections: CourseData["sections"] = [
+      { id: "T1", kind: "corner", name: "", s_start: 0, s_end: 2, s_apex: null, side: null },
+      { id: "T1→", kind: "straight", name: "", s_start: 2, s_end: 3 },
+    ];
+    const stat = { v_min: null, s_vmin: null, v_entry: null, v_exit: null, s_brake: null, ax_min: null };
+    const l = (opts: Partial<Lap>) => lap("a", [0, 1, 2, 3], { section_times: [1, 1], corner_stats: { T1: stat }, ...opts });
+    expect(() => checkCourse({ ...doc([l({})]), sections })).not.toThrow();
+    expect(() => checkCourse({ ...doc([l({ section_times: [1] })]), sections })).toThrow(/section_times の数/);
+    expect(() => checkCourse({ ...doc([l({ corner_stats: { T2: stat } })]), sections })).toThrow(/corner_stats/);
+    expect(() => checkCourse({ ...doc([l({ corner_stats: null })]), sections })).toThrow(/corner_stats/);
   });
 });
 
@@ -182,7 +208,7 @@ describe("gPoints", () => {
 });
 
 describe("cornerWindow", () => {
-  const c = { id: "T1", name: "", s_start: 10.5, s_apex: null, s_end: 90.2 };
+  const c = { id: "T1", kind: "corner" as const, name: "", s_start: 10.5, s_apex: null, s_end: 90.2, side: null };
   it("前後に pad を足して格子の整数にする", () => {
     expect(cornerWindow(c, 1000, 50)).toEqual([0, 141]);
     expect(cornerWindow(c, 100, 5)).toEqual([5, 96]);
@@ -249,15 +275,6 @@ describe("区間の自己ベスト", () => {
   });
 });
 
-/** 中心 (0, 0)・半径 r の円弧を 1 m 刻みでたどる基準線。dir = 1 なら左回り（反時計回り） */
-function arc(r: number, len: number, dir: 1 | -1): Refline {
-  const s = Array.from({ length: len + 1 }, (_, i) => i);
-  // 左回りは (r, 0) から北へ、右回りは (-r, 0) から北へ進み始める
-  const x = s.map((v) => dir * r * Math.cos(v / r));
-  const y = s.map((v) => r * Math.sin(v / r));
-  return { s, x, y };
-}
-
 describe("bearingAt", () => {
   it("北が 0°、東が 90°（時計回り）", () => {
     const north: Refline = { s: [0, 1, 2, 3, 4, 5, 6, 7], x: [0, 0, 0, 0, 0, 0, 0, 0], y: [0, 1, 2, 3, 4, 5, 6, 7] };
@@ -267,23 +284,53 @@ describe("bearingAt", () => {
   });
 });
 
-describe("turnAngle・turnSide", () => {
-  const corner = (s_start: number, s_end: number) => ({ id: "T", name: "", s_start, s_end, s_apex: null });
+/**
+ * 契約：fixtures/contract.json は analysis.export の小さいコースの書き出し（pytest の test_export_contract が、
+ * 今の書き出しと一致することを確かめる）。写した処理が Python と同じ値を出すか確かめる。
+ */
+describe("Python の書き出しとの契約", () => {
+  const { doc, expect: want } = contract as unknown as {
+    doc: CourseData;
+    expect: { ref: string; final_delta: Record<string, { s: number; dt: number }> };
+  };
 
-  it("左回りは正、右回りは負。180° を超えるヘアピンでも符号を保つ", () => {
-    // 半径 20 m で 250°（約 87 m）回る
-    const len = Math.round((20 * 250 * Math.PI) / 180);
-    const left = arc(20, len + 10, 1);
-    const right = arc(20, len + 10, -1);
-    expect(turnAngle(left, corner(5, 5 + len))).toBeCloseTo(250, -1);
-    expect(turnAngle(right, corner(5, 5 + len))).toBeCloseTo(-250, -1);
-    expect(turnSide(left, corner(5, 5 + len))).toBe(1);
-    expect(turnSide(right, corner(5, 5 + len))).toBe(-1);
+  it("checkCourse を通る", () => {
+    expect(() => checkCourse(doc)).not.toThrow();
   });
 
-  it("向きの変わりが小さければ向きを決めない", () => {
-    const gentle = arc(400, 200, 1);
-    // 100 m / 400 m ≈ 14°
-    expect(turnSide(gentle, corner(50, 150))).toBeNull();
+  it("finalDelta(timeDelta) が data.final_delta と 1e-3 s 以内で一致する", () => {
+    const ref = doc.laps.find((l) => l.label === want.ref)!;
+    const got = Object.fromEntries(
+      doc.laps.flatMap((l) => {
+        const f = finalDelta(timeDelta(l, ref));
+        return f ? [[l.label, f]] : [];
+      }),
+    );
+    expect(Object.keys(got).sort()).toEqual(Object.keys(want.final_delta).sort());
+    for (const [label, f] of Object.entries(want.final_delta)) {
+      expect(got[label]!.s).toBe(f.s);
+      expect(Math.abs(got[label]!.dt - f.dt)).toBeLessThanOrEqual(1e-3 + 1e-9);
+    }
+  });
+
+  it("sectorTimes を区間の境界で求めると section_times と一致する", () => {
+    const bounds = [...doc.sections!.map((s) => s.s_start), doc.grid_max];
+    for (const l of doc.laps) {
+      const got = sectorTimes(l, bounds);
+      l.section_times!.forEach((v, i) => {
+        if (v == null) expect(got[i]).toBeNull();
+        else expect(got[i]).toBeCloseTo(v, 6);
+      });
+    }
+  });
+
+  it("コーナーは id で値を引ける", () => {
+    const [t1, t2] = cornersOf(doc);
+    expect(t1).toMatchObject({ id: "T1", side: "right" });
+    expect(t2).toMatchObject({ id: "T2", side: null, s_apex: null });
+    const l = doc.laps.find((x) => x.label === "racechrono rc1 #1")!;
+    expect(sectionTime(doc, l, "T1")).toBe(l.section_times![1]);
+    expect(l.corner_stats!["T1"]!.s_brake).toBe(15);
+    expect(sectionTime(doc, l, "T9")).toBeNull();
   });
 });

@@ -1,9 +1,13 @@
 // 書き出したデータ（analysis.export）の読み込みと、画面の状態に依存する計算。
-// 次の処理は Python の判定を写したもの（理由は analysis/export.py の docstring にある）。
-// Python 側を変えたらここも合わせる。
-// - timeDelta・finalDelta：analysis/data.py の time_delta・final_delta。書き出しの t は 1e-3 s に
-//   丸めてあるので、Δt は time_delta と最大 1e-3 s ずれる。
-// - shownLaps・refCandidates・defaultSelection：analysis/view1.py の周の絞り込み。
+// Python の処理を写したもの（SCHEMA、CHANNELS、timeDelta、finalDelta、sectorTimes ほか）の一覧と理由は
+// analysis/export.py の docstring にだけ書く。Python 側を変えたらここも合わせる。
+// 写しの突き合わせは fixtures/contract.json（pytest が書き出しと一致を確かめる）で data.test.ts が行う。
+
+/** 書き出す形の版（analysis.export の SCHEMA）。違う版の JSON は読まない */
+export const SCHEMA = 1;
+
+/** 周ごとの配列のキー（analysis.export の DIGITS のキー）。書き出しの channels と一致しなければ読まない */
+export const CHANNELS = ["t", "speed_kmh", "x", "y", "ax", "ay", "offset", "throttle", "brake"] as const;
 
 export type Series = (number | null)[];
 
@@ -28,25 +32,37 @@ export interface Lap {
   brake: Series;
   /** 基準線からの横のずれ [m]。進行方向の左が正（analysis.export） */
   offset: Series;
-  /** コーナーごとの値（corners と同じ順）。corners.toml がなければ null */
-  corner_stats: CornerStat[] | null;
+  /** コーナーごとの値（コーナーの id で引く）。corners.toml がなければ null */
+  corner_stats: Record<string, CornerStat> | null;
   /** 区間タイム [s]（sections と同じ順）。区間に欠けがあれば null。corners.toml がなければ全体が null */
   section_times: (number | null)[] | null;
 }
 
-/** analysis.export の sections：コーナーと直線で 1 周を隙間なく覆う区間。境界は s の格子の整数 */
-export interface Section {
+interface SectionBase {
   id: string;
-  kind: "corner" | "straight";
   name: string;
   s_start: number;
   s_end: number;
 }
 
-/** analysis.export の corner_stats。区間に欠けがある周は値が null。速度は km/h */
+/**
+ * コーナーの区間（analysis.export の sections の kind = "corner"）。境界は corners.toml の値ではなく、
+ * 隙間を吸収して延ばした区間の境界。コーナーの区間タイムは section_times のこの区間の値
+ */
+export interface Corner extends SectionBase {
+  kind: "corner";
+  s_apex: number | null;
+  /** corners.toml の r_apex の符号から決めた向き。r_apex がなければ null */
+  side: "left" | "right" | null;
+}
+
+/** analysis.export の sections：コーナーと直線で 1 周を隙間なく覆う区間。境界は s の格子の整数 */
+export type Section = Corner | (SectionBase & { kind: "straight" });
+
+/**
+ * analysis.export の corner_stats。区間は sections のコーナーの区間。区間に欠けがある周は値が null。速度は km/h
+ */
 export interface CornerStat {
-  id: string;
-  t_section: number | null;
   v_min: number | null;
   s_vmin: number | null;
   v_entry: number | null;
@@ -55,14 +71,6 @@ export interface CornerStat {
   s_brake: number | null;
   /** 前のコーナーの後からボトムまでの ax の最小値 [G]。欠けありなら null */
   ax_min: number | null;
-}
-
-export interface Corner {
-  id: string;
-  name: string;
-  s_start: number;
-  s_apex: number | null;
-  s_end: number;
 }
 
 export interface Refline {
@@ -100,13 +108,15 @@ export interface Edges {
 }
 
 export interface CourseData {
+  schema: number;
+  channels: string[];
   course: string;
   length: number;
   grid_max: number;
   refline: Refline;
   /** track/<course>/edges.csv がなければ null */
   edges: Edges | null;
-  corners: Corner[] | null;
+  /** corners.toml がなければ null */
   sections: Section[] | null;
   default_ref: string | null;
   /** ブレーキ開始点のしきい値 [G]（仮の値。analysis.export の BRAKE_G） */
@@ -137,8 +147,19 @@ export async function loadCourse(course: string): Promise<CourseData> {
   return doc;
 }
 
-/** 配列の長さが書き出しの約束（周の配列は grid_max + 1）と合っているか。合わなければ失敗させる。 */
+/**
+ * 書き出しの約束と合っているか。版、チャンネルのキー、配列の長さ（周の配列は grid_max + 1）、
+ * コーナーごと・区間ごとの値がコーナーと区間に揃っているか。合わなければ失敗させる。
+ */
 export function checkCourse(doc: CourseData): void {
+  if (doc.schema !== SCHEMA) {
+    throw new Error(
+      `${doc.course}: 書き出しの版が ${doc.schema ?? "なし"}（web view は ${SCHEMA}）。npm run data で書き出し直す`,
+    );
+  }
+  if (doc.channels.join() !== CHANNELS.join()) {
+    throw new Error(`${doc.course}: チャンネルが ${doc.channels.join(", ")}（${CHANNELS.join(", ")} のはず）`);
+  }
   const n = doc.grid_max + 1;
   const r = doc.refline;
   if (r.x.length !== r.s.length || r.y.length !== r.s.length) {
@@ -151,22 +172,38 @@ export function checkCourse(doc: CourseData): void {
         throw new Error(`${doc.course}: コースの端（${side}）の長さが基準線と違う`);
       }
     }
-    if (!Array.isArray(doc.edges.kerbs)) {
-      throw new Error(`${doc.course}: コースの端に kerbs がない（npm run data で書き出し直す）`);
-    }
     for (const k of doc.edges.kerbs) {
       if (k.x.length !== k.i.length || k.y.length !== k.i.length) {
         throw new Error(`${doc.course}: 縁石（${k.side}）の i, x, y の長さが違う`);
       }
     }
   }
+  const cornerIds = doc.sections == null ? null : cornersOf(doc).map((c) => c.id).join();
   for (const lap of doc.laps) {
-    for (const key of ["t", "speed_kmh", "x", "y", "ax", "ay", "offset", "throttle", "brake"] as const) {
-      if (lap[key].length !== n) {
-        throw new Error(`${doc.course}: ${lap.label} の ${key} の長さが ${lap[key].length}（${n} のはず）`);
+    for (const key of CHANNELS) {
+      if (lap[key]?.length !== n) {
+        throw new Error(`${doc.course}: ${lap.label} の ${key} の長さが ${lap[key]?.length}（${n} のはず）`);
       }
     }
+    if ((lap.section_times?.length ?? null) !== (doc.sections?.length ?? null)) {
+      throw new Error(`${doc.course}: ${lap.label} の section_times の数が区間の数と違う`);
+    }
+    const statIds = lap.corner_stats == null ? null : Object.keys(lap.corner_stats).join();
+    if (statIds !== cornerIds) {
+      throw new Error(`${doc.course}: ${lap.label} の corner_stats のコーナーが sections のコーナーと違う`);
+    }
   }
+}
+
+/** コーナー（sections のコーナーの区間、s の順）。corners.toml がなければ空 */
+export function cornersOf(doc: CourseData): Corner[] {
+  return (doc.sections ?? []).filter((s): s is Corner => s.kind === "corner");
+}
+
+/** 区間 `id` の区間タイム（section_times の値）。区間がないか、区間に欠けがあれば null */
+export function sectionTime(doc: CourseData, lap: Lap, id: string): number | null {
+  const i = doc.sections?.findIndex((s) => s.id === id) ?? -1;
+  return i < 0 ? null : (lap.section_times?.[i] ?? null);
 }
 
 /** 一覧に出す周。既定では lap_valid の周だけ。 */
@@ -364,31 +401,4 @@ export function bearingAt(line: Refline, s: number, half = 3): number {
   const b = pointAt(line, s + half);
   if (a.x === b.x && a.y === b.y) throw new Error(`s = ${s} で基準線の向きが決まらない`);
   return (Math.atan2(b.x - a.x, b.y - a.y) * 180) / Math.PI;
-}
-
-/** コーナーの向きを決めるのに要る、区間全体で向きが変わる角度の下限 [°] */
-export const TURN_MIN_DEG = 30;
-
-/**
- * コーナーの区間 s_start〜s_end で基準線の向きが変わる角度の合計 [°]。左に曲がると正。
- * 1 m ごとの向きの差を足すので、180° を超えるヘアピンでも符号を取り違えない。
- */
-export function turnAngle(line: Refline, c: Corner): number {
-  let total = 0;
-  let prev = bearingAt(line, c.s_start);
-  for (let s = c.s_start + 1; s <= c.s_end; s++) {
-    const h = bearingAt(line, s);
-    // 方位は時計回りなので、左に曲がると減る。差を -180〜180 に収めてから符号を反転する
-    const d = ((h - prev + 540) % 360) - 180;
-    total -= d;
-    prev = h;
-  }
-  return total;
-}
-
-/** コーナーの向き：左なら 1、右なら -1。向きの変わりが TURN_MIN_DEG 未満なら null（向きを決めない） */
-export function turnSide(line: Refline, c: Corner): 1 | -1 | null {
-  const a = turnAngle(line, c);
-  if (Math.abs(a) < TURN_MIN_DEG) return null;
-  return a > 0 ? 1 : -1;
 }

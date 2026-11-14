@@ -5,6 +5,7 @@ import * as Plot from "@observablehq/plot";
 import * as d3 from "d3";
 import {
   bearingAt,
+  cornersOf,
   fitDomains,
   gPoints,
   pointAt,
@@ -204,14 +205,13 @@ export function courseMap(
   const pad = 0.05 * Math.max(x1 - x0, y1 - y0);
   const width = equalScaleWidth(height, MAP_MARGIN, x1 - x0 + 2 * pad, y1 - y0 + 2 * pad);
   const ticks = d3.range(0, doc.length, S_TICK).map((s) => ({ s, ...pointAt(line, s) }));
-  const apexes = (doc.corners ?? [])
-    .map((c, ci) => ({ ...c, ci }))
+  const apexes = cornersOf(doc)
     .filter((c) => c.s_apex != null)
     .map((c) => ({ ...c, ...pointAt(line, c.s_apex!) }));
   // 各コーナーの記号の下に、重ねる周の最低通過速度 [km/h] を周の色で縦に並べる
   const vmins = apexes.flatMap((c) =>
     laps.flatMap((lap) => {
-      const v = lap.corner_stats?.[c.ci]?.v_min;
+      const v = lap.corner_stats?.[c.id]?.v_min;
       return v == null ? [] : [{ x: c.x, y: c.y, v, lap }];
     }),
   );
@@ -292,7 +292,7 @@ export function distanceChart(
     extra?: Plot.Markish[];
   },
 ): Chart {
-  const corners = doc.corners ?? [];
+  const corners = cornersOf(doc);
   return asChart(
     Plot.plot({
       width: opts.width ?? PLOT_WIDTH,
@@ -496,14 +496,13 @@ export function cornerMap(
     { label: "始点", ...pointAt(line, corner.s_start) },
     { label: "終点", ...pointAt(line, corner.s_end) },
   ];
-  const ci = (doc.corners ?? []).findIndex((c) => c.id === corner.id);
   const brakes = laps.flatMap((l) => {
-    const s = l.corner_stats?.[ci]?.s_brake;
+    const s = l.corner_stats?.[corner.id]?.s_brake;
     if (s == null || l.x[s] == null || l.y[s] == null) return [];
     return [{ lap: l, x: l.x[s]!, y: l.y[s]!, bearing: bearingAt(line, s) }];
   });
   const bottoms = laps.flatMap((l) => {
-    const st = l.corner_stats?.[ci];
+    const st = l.corner_stats?.[corner.id];
     const s = st?.s_vmin;
     if (s == null || l.x[s] == null || l.y[s] == null) return [];
     return [{ lap: l, x: l.x[s]!, y: l.y[s]!, v: st!.v_min!, color: style(l).stroke }];

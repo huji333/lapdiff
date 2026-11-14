@@ -4,13 +4,13 @@
 //   幅は列の幅に合わせる（呼ぶ側が測って渡す）。
 // - 距離×横のずれと距離×速度を、コーナーの前後の範囲だけ描く。
 //   横のずれで「どこで外に振り、どこで寄せたか」、速度で「その結果どこまで落ちたか」を同じ s で見る。
-//   横のずれは、そのコーナーの内側（基準線の向きの変わりから決める）を正にし、上ほどイン寄りと読めるようにする。
+//   横のずれは、そのコーナーの内側（書き出しの side）を正にし、上ほどイン寄りと読めるようにする。
 //   前後 PAD m に隣の逆向きのコーナーがかかっても、正の向きはこのコーナーの内側のまま変えない。軸の名前に左右を書く。
 // - G-G 図：その範囲の軌跡を濃く描く（周全体は薄く）。
 // - 距離×前後G：ブレーキ開始点のしきい値（brake_g）を破線で引く。各周のブレーキ開始点は、どの距離のグラフにも周の色の縦の破線で示す。
 // - 距離×ペダル：アクセルを上、ブレーキを下に [%]。ペダルを記録している周（AC）だけ描く。
 //   実車の前後G から決めたブレーキ開始点と、シムの実際の踏み始めを同じ s で比べられる。
-// - 表：区間タイム（基準ラップとの差）、始点・ボトム・終点の速度、ボトムの位置、ブレーキ開始点、最大減速度。
+// - 表：区間タイム（section_times の値。基準ラップとの差）、始点・ボトム・終点の速度、ボトムの位置、ブレーキ開始点、最大減速度。
 //   値は analysis.export が出す。
 // - 距離のグラフにカーソルを置くと、拡大図と G-G 図にその s の各周の点を打つ。
 
@@ -21,7 +21,7 @@ import {
   cornerWindow,
   hasPedals,
   pedalSeries,
-  turnSide,
+  sectionTime,
   type Corner,
   type CourseData,
   type Lap,
@@ -62,9 +62,8 @@ export function renderCorner(
   mapWidth: number,
   mapHeight: number,
 ): void {
-  const ci = doc.corners!.findIndex((c) => c.id === corner.id);
   const brakes = laps.flatMap((lap) => {
-    const s = lap.corner_stats?.[ci]?.s_brake;
+    const s = lap.corner_stats?.[corner.id]?.s_brake;
     return s == null ? [] : [{ lap, s }];
   });
   // ブレーキ開始点が区間の手前 PAD m より前にある周もあるので、そこまで広げる
@@ -97,8 +96,8 @@ export function renderCorner(
     extra: brakeRules,
   };
   // offset は進む向きの左が正。右のコーナーでは符号を反転して内側を正にする。向きが決まらなければ左を正のまま描く
-  const side = turnSide(doc.refline, corner);
-  const inward = side ?? 1;
+  const side = corner.side;
+  const inward = side === "right" ? -1 : 1;
   const offset = distanceChart(
     doc,
     laps.map((lap) => ({ lap, values: lap.offset.map((v) => (v == null ? null : inward * v)) })),
@@ -109,7 +108,7 @@ export function renderCorner(
       yLabel:
         side == null
           ? "横のずれ [m]（基準線から左が正）"
-          : `横のずれ [m]（${corner.id} の内側＝${side === 1 ? "左" : "右"}が正）`,
+          : `横のずれ [m]（${corner.id} の内側＝${side === "left" ? "左" : "右"}が正）`,
     },
   );
   els.offset.replaceChildren(offset.svg);
@@ -169,18 +168,19 @@ export function renderCorner(
     },
   });
 
-  renderTable(els.table, laps, ref, ci, style, swatch);
+  renderTable(els.table, doc, laps, ref, corner, style, swatch);
 }
 
 function renderTable(
   table: HTMLTableElement,
+  doc: CourseData,
   laps: Lap[],
   ref: Lap | null,
-  ci: number,
+  corner: Corner,
   style: (lap: Lap) => LapStyle,
   swatch: (style: LapStyle) => SVGSVGElement,
 ): void {
-  const refT = ref?.corner_stats?.[ci]?.t_section ?? null;
+  const refT = ref ? sectionTime(doc, ref, corner.id) : null;
   const head = table.createTHead();
   head.replaceChildren();
   const hr = head.insertRow();
@@ -203,16 +203,17 @@ function renderTable(
   const body = table.tBodies[0] ?? table.createTBody();
   body.replaceChildren();
   for (const lap of laps) {
-    const st = lap.corner_stats?.[ci];
+    const st = lap.corner_stats?.[corner.id];
+    const t = sectionTime(doc, lap, corner.id);
     const tr = body.insertRow();
     if (lap === ref) tr.className = "ref";
     const name = document.createElement("span");
     name.className = "lap-label";
     name.append(swatch(style(lap)), lap.label);
     tr.insertCell().append(name);
-    const diff = st?.t_section != null && refT != null ? st.t_section - refT : null;
+    const diff = t != null && refT != null ? t - refT : null;
     for (const c of [
-      fmt(st?.t_section, 3),
+      fmt(t, 3),
       fmt(diff, 3, true),
       // ax_min があって s_brake がないのは、しきい値を下回らなかった周
       st?.s_brake != null ? String(st.s_brake) : st?.ax_min != null ? "なし" : "N/A",

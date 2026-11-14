@@ -42,7 +42,9 @@ def test_export_course(data_dir, course_dir):
     assert doc["length"] == pytest.approx(LENGTH)
     assert doc["grid_max"] == 100
     assert len(doc["refline"]["s"]) == 101
-    assert doc["corners"] is None
+    assert doc["sections"] is None
+    assert doc["schema"] == export.SCHEMA
+    assert doc["channels"] == list(export.DIGITS)
     assert doc["default_ref"] == "racechrono rc1 #2"
 
     laps = laps_by_label(doc)
@@ -83,16 +85,18 @@ def test_export_g_null(tmp_path, course_dir):
 
 
 def test_export_corners(data_dir, course_dir):
+    """コーナーは sections の kind = "corner" の区間で、s_apex と r_apex の符号から決めた向きを持つ。"""
     (course_dir / "corners.toml").write_text(
-        '[[corner]]\nid = "T1"\nname = "一"\ns_start = 10\ns_end = 30\ns_apex = 20\n'
-        '\n[[corner]]\nid = "T2"\nname = "二"\ns_start = 40\ns_end = 60\n',
+        '[[corner]]\nid = "T1"\nname = "一"\ns_start = 10\ns_end = 30\ns_apex = 20\nr_apex = -40\n'
+        '\n[[corner]]\nid = "T2"\nname = "二"\ns_start = 40\ns_end = 60\n'
+        '\n[[corner]]\nid = "T3"\nname = "三"\ns_start = 70\ns_end = 80\ns_apex = 75\nr_apex = 30\n',
         encoding="utf-8",
     )
     doc = export.export_course(data_dir, course_dir)
-    assert doc["corners"] == [
-        {"id": "T1", "name": "一", "s_start": 10.0, "s_apex": 20.0, "s_end": 30.0},
-        {"id": "T2", "name": "二", "s_start": 40.0, "s_apex": None, "s_end": 60.0},
-    ]
+    assert "corners" not in doc
+    corners = [s for s in doc["sections"] if s["kind"] == "corner"]
+    assert [(c["id"], c["s_apex"], c["side"]) for c in corners] == [
+        ("T1", 20.0, "right"), ("T2", None, None), ("T3", 75.0, "left")]
 
 
 def test_export_mixed_length(tmp_path, data_dir, course_dir):
@@ -162,30 +166,35 @@ def test_export_pedals(tmp_path, course_dir):
 
 
 def test_export_corner_stats(tmp_path, course_dir):
+    """値はコーナーの id で引け、区間は sections のコーナーの区間（隙間を吸収して延ばした境界）で求める。"""
     (course_dir / "corners.toml").write_text(
         '[[corner]]\nid = "T1"\nname = "一"\ns_start = 10.5\ns_end = 30\n'
-        '\n[[corner]]\nid = "T2"\nname = "二"\ns_start = 50\ns_end = 60\n',
+        '\n[[corner]]\nid = "T2"\nname = "二"\ns_start = 35\ns_end = 60\n',
         encoding="utf-8",
     )
     speed = np.full(101, 40.0)
     speed[20] = 20.0
+    speed[35] = 30.0  # T1 の延ばした終点（corners.toml では 30）
     full = lap_rows("racechrono", "rc1", 1, True, S, S / 10).with_columns(speed=pl.Series(speed))
     # s = 0〜55 だけの断片：T2 の区間に欠けがある
     part = lap_rows("racechrono", "rc1", 2, False, S[:56], S[:56] / 10)
     write(tmp_path / "data", full, part)
-    laps = laps_by_label(export.export_course(tmp_path / "data", course_dir))
+    doc = export.export_course(tmp_path / "data", course_dir)
+    assert [(s["id"], s["s_start"], s["s_end"]) for s in doc["sections"]] == [
+        ("→T1", 0, 11), ("T1", 11, 35), ("T2", 35, 60), ("T2→", 60, 100)]
+    laps = laps_by_label(doc)
 
-    t1, t2 = laps["racechrono rc1 #1"]["corner_stats"]
-    # 区間の格子は s = 11〜30
-    assert t1 == {"id": "T1", "t_section": pytest.approx(1.9), "v_min": pytest.approx(72.0),
-                  "s_vmin": 20, "v_entry": pytest.approx(144.0), "v_exit": pytest.approx(144.0),
-                  "s_brake": None, "ax_min": 0.0}
-    assert t2["t_section"] == pytest.approx(1.0)
+    stats = laps["racechrono rc1 #1"]["corner_stats"]
+    assert list(stats) == ["T1", "T2"]
+    assert stats["T1"] == {"v_min": pytest.approx(72.0), "s_vmin": 20, "v_entry": pytest.approx(144.0),
+                           "v_exit": pytest.approx(108.0), "s_brake": None, "ax_min": 0.0}
+    # コーナーの区間タイムは section_times にだけある
+    assert laps["racechrono rc1 #1"]["section_times"][1] == pytest.approx(2.4)
 
-    p1, p2 = laps["racechrono rc1 #2"]["corner_stats"]
-    assert p1["t_section"] == pytest.approx(1.9)
-    assert p2 == {"id": "T2", "t_section": None, "v_min": None, "s_vmin": None,
-                  "v_entry": None, "v_exit": None, "s_brake": None, "ax_min": None}
+    p = laps["racechrono rc1 #2"]["corner_stats"]
+    assert p["T1"]["v_min"] == pytest.approx(144.0)
+    assert p["T2"] == {"v_min": None, "s_vmin": None, "v_entry": None, "v_exit": None,
+                       "s_brake": None, "ax_min": None}
 
 
 @pytest.mark.parametrize(
