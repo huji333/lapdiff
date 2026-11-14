@@ -1,0 +1,94 @@
+# コーナーの区間（基準線上の距離 [m]）。ingest.corners が候補を書き、人が直す。
+# source = okayama_lap10_best.csv、lap 10（131.468 s、有効な周の最速）
+# s_apex, r_apex は参考値：その周の走行ラインで |kappa| が最大の点と、そこでの曲率半径 [m]
+# （正が左、負が右）。区間の決め方は ingest/corners.py の docstring にある
+#
+# name は手で付けた。周回の順とコーナーの向き・速さから当てた通称で、コース図では確かめていない。
+# 確信のないものに「（仮）」を付けた。T5 と T6 は同じ左で、間で曲率がいったん抜け、
+# それぞれにブレーキがあるので分けた。2 つで 1 つのリボルバーとみている。
+#
+# 候補にしなかった緩い曲がり（半径 150〜400 m。全開で抜ける）：
+#   s_apex = 754, r_apex = 230
+#   s_apex = 877, r_apex = -251
+#   （754 の左と 877 の右の切り返しをモスS（仮）とみている）
+#   s_apex = 2291, r_apex = -350
+
+[[corner]]
+id = "T1"
+name = "1コーナー"
+s_start = 73
+s_end = 393
+s_apex = 274
+r_apex = -49
+
+[[corner]]
+id = "T2"
+name = "ウィリアムズ（仮）"
+s_start = 402
+s_end = 648
+s_apex = 518
+r_apex = 78
+
+[[corner]]
+id = "T3"
+name = "アトウッド（仮）"
+s_start = 968
+s_end = 1396
+s_apex = 1142
+r_apex = -43
+
+[[corner]]
+id = "T4"
+name = "ヘアピン"
+s_start = 1843
+s_end = 2155
+s_apex = 2069
+r_apex = -25
+
+[[corner]]
+id = "T5"
+name = "リボルバー前半（仮）"
+s_start = 2163
+s_end = 2300
+s_apex = 2232
+r_apex = 34
+
+[[corner]]
+id = "T6"
+name = "リボルバー後半（仮）"
+s_start = 2300
+s_end = 2468
+s_apex = 2378
+r_apex = 49
+
+[[corner]]
+id = "T7"
+name = "パイパー（仮）"
+s_start = 2572
+s_end = 2803
+s_apex = 2728
+r_apex = 26
+
+[[corner]]
+id = "T8"
+name = "レッドマン（仮）"
+s_start = 2803
+s_end = 2965
+s_apex = 2864
+r_apex = -28
+
+[[corner]]
+id = "T9"
+name = "ホッブス（仮）"
+s_start = 3006
+s_end = 3175
+s_apex = 3102
+r_apex = -66
+
+[[corner]]
+id = "T10"
+name = "マイクナイト（仮）"
+s_start = 3175
+s_end = 3390
+s_apex = 3269
+r_apex = -43
