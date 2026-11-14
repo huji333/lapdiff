@@ -1,0 +1,56 @@
+
+{
+	"track": "okayama-circuit_gp",
+	"number_of_sessions": 1,
+	"players": [
+		{
+			"name": "huji333",
+			"car": "ks_mazda_mx5_nd",
+			"skin": "02_artic_white"
+		}],
+	"sessions": [
+		{
+			"event": 0,
+			"name": "Practice",
+			"type": 1,
+			"lapsCount": 0,
+			"duration": 0,
+			"laps": [
+				{
+					"lap": 0,
+					"car": 0,
+					"sectors": [51886, 52987, 56538],
+					"time": -1,
+					"cuts": 2,
+					"tyre": "ST"
+				}, 
+				{
+					"lap": 1,
+					"car": 0,
+					"sectors": [30188, 55045, 44180],
+					"time": 129413,
+					"cuts": 0,
+					"tyre": "ST"
+				}, 
+				{
+					"lap": 2,
+					"car": 0,
+					"sectors": [29482, 54859, 43547],
+					"time": 127888,
+					"cuts": 0,
+					"tyre": "ST"
+				}],
+			"lapstotal": [3],
+			"bestLaps": [
+				{
+					"car": 0,
+					"time": 127888,
+					"lap": 2
+				}]
+		}],
+	"extras": [
+		{
+			"name": "bestlap",
+			"time": 127888
+		}]
+}
