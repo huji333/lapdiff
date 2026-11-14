@@ -30,6 +30,17 @@ export interface Lap {
   offset: Series;
   /** コーナーごとの値（corners と同じ順）。corners.toml がなければ null */
   corner_stats: CornerStat[] | null;
+  /** 区間タイム [s]（sections と同じ順）。区間に欠けがあれば null。corners.toml がなければ全体が null */
+  section_times: (number | null)[] | null;
+}
+
+/** analysis.export の sections：コーナーと直線で 1 周を隙間なく覆う区間。境界は s の格子の整数 */
+export interface Section {
+  id: string;
+  kind: "corner" | "straight";
+  name: string;
+  s_start: number;
+  s_end: number;
 }
 
 /** analysis.export の corner_stats。区間に欠けがある周は値が null。速度は km/h */
@@ -66,9 +77,12 @@ export interface CourseData {
   grid_max: number;
   refline: Refline;
   corners: Corner[] | null;
+  sections: Section[] | null;
   default_ref: string | null;
   /** ブレーキ開始点のしきい値 [G]（仮の値。analysis.export の BRAKE_G） */
   brake_g: number;
+  /** 区間タイムの差をこれ未満なら「差なし」とみなすしきい値 [s]（仮の値。analysis.export の MIN_DIFF_S） */
+  min_diff_s: number;
   laps: Lap[];
 }
 
@@ -247,4 +261,50 @@ export function pointAt(line: Refline, s: number): { x: number; y: number } {
   }
   const f = (s - ss[lo]!) / (ss[hi]! - ss[lo]!);
   return { x: x[lo]! + f * (x[hi]! - x[lo]!), y: y[lo]! + f * (y[hi]! - y[lo]!) };
+}
+
+/**
+ * 自己ベストの母集団：`lap` と同じソースの、lap_valid の周（全期間）。
+ * 実車と AC は分ける。無効な周（ピットイン、コース外など）は区間が速く出ることがあるので入れない。
+ */
+export function bestPool(laps: Lap[], lap: Lap): Lap[] {
+  return laps.filter((l) => l.source === lap.source && l.lap_valid);
+}
+
+/** 区間ごとの最小（null を除く）。どの周にも値がない区間は null。 */
+export function minPerIndex(rows: (number | null)[][], n: number): (number | null)[] {
+  const out: (number | null)[] = Array.from({ length: n }, () => null);
+  for (const row of rows) {
+    row.forEach((v, i) => {
+      if (v != null && (out[i] == null || v < out[i]!)) out[i] = v;
+    });
+  }
+  return out;
+}
+
+/** `times` と区間ごとの自己ベスト `best` の差 [s]。どちらかが null なら null。 */
+export function lossVsBest(times: (number | null)[], best: (number | null)[]): (number | null)[] {
+  return times.map((v, i) => (v == null || best[i] == null ? null : v - best[i]!));
+}
+
+/** ミニセクターの境界：0, step, 2 step, …, grid_max。最後の区間が step の半分未満なら前に含める */
+export function miniBounds(gridMax: number, step: number): number[] {
+  const b: number[] = [];
+  for (let s = 0; s < gridMax; s += step) b.push(s);
+  if (b.length > 1 && gridMax - b[b.length - 1]! < step / 2) b.pop();
+  b.push(gridMax);
+  return b;
+}
+
+/** 境界 `bounds` で区切った区間タイム。analysis.export の section_times と同じく、区間に欠けがあれば null */
+export function sectorTimes(lap: Lap, bounds: number[]): (number | null)[] {
+  const out: (number | null)[] = [];
+  for (let i = 0; i + 1 < bounds.length; i++) {
+    const a = bounds[i]!;
+    const b = bounds[i + 1]!;
+    let ok = true;
+    for (let s = a; s <= b; s++) if (lap.t[s] == null) ok = false;
+    out.push(ok ? lap.t[b]! - lap.t[a]! : null);
+  }
+  return out;
 }

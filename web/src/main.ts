@@ -3,6 +3,7 @@
 import "./style.css";
 import { attachDistance, attachMap, drawDots, gAt, Link, type DistanceId } from "./brush";
 import { renderCorner } from "./corner";
+import { lossColor, miniLosses, renderPanel, sectionLosses, setupPanel } from "./sections";
 import {
   courseMap,
   distanceChart,
@@ -67,6 +68,13 @@ const ui = {
     table: el<HTMLTableElement>("c-table"),
   },
   laps: el<HTMLTableElement>("laps"),
+  panel: {
+    root: el<HTMLElement>("sections-panel"),
+    head: el<HTMLElement>("sp-head"),
+    title: el<HTMLElement>("sp-title"),
+    toggle: el<HTMLButtonElement>("sp-toggle"),
+    body: el<HTMLElement>("sp-body"),
+  },
 };
 
 interface State {
@@ -225,6 +233,7 @@ function render(): void {
   const mapHeight = Math.max(MAP_MIN_HEIGHT, window.innerHeight - 8);
 
   if (state.view === "corner") {
+    ui.panel.root.hidden = true;
     link.reset();
     const corner = doc.corners?.find((c) => c.id === state!.corner);
     if (!corner) {
@@ -236,7 +245,16 @@ function render(): void {
   }
 
   link.reset();
-  const map = courseMap(doc, overlaid, style, mapHeight);
+  // 区間ごとの損失：2 周で比べるときの比較の周について出す。複数の周を重ねるときは出さない
+  const losses = !state.multi && cmp ? sectionLosses(doc, cmp) : null;
+  ui.panel.root.hidden = losses == null;
+  let paint: { bounds: number[]; color: (string | null)[] } | null = null;
+  if (losses && cmp) {
+    const mini = miniLosses(doc, cmp);
+    const color = lossColor(Math.max(0.1, ...mini.loss.map((v) => v ?? 0)));
+    paint = { bounds: mini.bounds, color: mini.loss.map(color) };
+  }
+  const map = courseMap(doc, overlaid, style, mapHeight, paint);
   ui.map.replaceChildren(map.svg);
   attachMap(map, doc.refline, overlaid, (l) => style(l).stroke, link);
 
@@ -314,6 +332,7 @@ function render(): void {
     onSelect: () => {},
     onHover: (s) => renderReadout(s, overlaid, style, dts),
   });
+  if (losses && cmp) renderPanel(ui.panel.body, ui.panel.title, doc, cmp, losses, link);
 }
 
 /**
@@ -475,6 +494,7 @@ async function main(): Promise<void> {
     window.clearTimeout(resizeTimer);
     resizeTimer = window.setTimeout(rerender, 200);
   });
+  setupPanel(ui.panel.root, ui.panel.head, ui.panel.toggle);
   await openCourse(courses[0]!);
 }
 

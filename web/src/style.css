@@ -179,3 +179,101 @@ main {
 .stats tr.ref {
   background: var(--ref-bg);
 }
+
+/* 区間ごとの損失のパネル（sections.ts）。画面に浮かせ、見出しのドラッグで動かす */
+.float-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  width: 320px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+  font-size: 12px;
+}
+
+.fp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #f2f2f2;
+  border-bottom: 1px solid var(--line);
+  border-radius: 6px 6px 0 0;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+  font-weight: bold;
+}
+
+.float-panel.collapsed .fp-body {
+  display: none;
+}
+
+.fp-body {
+  overflow-y: auto;
+  padding: 6px 8px;
+}
+
+.sp-summary {
+  margin: 0 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.sp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sp-row {
+  display: grid;
+  grid-template-columns: 5.5em 1fr 4em 2.5em;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-row:hover {
+  background: #f6f6f6;
+}
+
+.sp-row.straight .sp-name {
+  color: var(--muted);
+}
+
+.sp-bar {
+  height: 10px;
+  background: #f0f0f0;
+}
+
+.sp-bar > span {
+  display: block;
+  height: 100%;
+  background: #b2182b;
+}
+
+.sp-row.small .sp-bar > span {
+  background: #bbb;
+}
+
+.sp-row.small .sp-val {
+  color: var(--muted);
+}
+
+.sp-val {
+  text-align: right;
+}

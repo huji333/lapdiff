@@ -203,3 +203,58 @@ def test_export_corner_stats(tmp_path, course_dir):
 )
 def test_brake_point(ax, expected):
     assert export.brake_point([None] * 10 + ax, 10, 10 + len(ax) - 1) == expected
+
+
+def _corner(cid, a, b):
+    from ingest.corners import Corner
+
+    return Corner(cid, cid, a, b, float("nan"), float("nan"))
+
+
+def test_sections_cover_lap():
+    """コーナーの間の直線を足し、0〜grid_max を隙間なく覆う。10 m 以下の隙間は前のコーナーに含める。"""
+    secs = export.sections([_corner("T1", 20, 40), _corner("T2", 45, 60), _corner("T3", 80, 95)], 100)
+    assert [(s["id"], s["kind"], s["s_start"], s["s_end"]) for s in secs] == [
+        ("→T1", "straight", 0, 20),
+        ("T1", "corner", 20, 45),  # T1 と T2 の間の 5 m は T1 に含める
+        ("T2", "corner", 45, 60),
+        ("T2→T3", "straight", 60, 80),
+        ("T3", "corner", 80, 100),  # 計測線までの 5 m も T3 に含める
+    ]
+    assert secs[0]["name"] == "計測線→T1"
+
+
+def test_sections_short_start():
+    """計測線の直後の短い隙間は、最初のコーナーの始点を 0 にして吸収する。最後の直線は計測線まで。"""
+    secs = export.sections([_corner("T1", 5.5, 30)], 100)
+    assert [(s["id"], s["s_start"], s["s_end"]) for s in secs] == [("T1", 0, 30), ("T1→", 30, 100)]
+    assert secs[1]["name"] == "T1→計測線"
+
+
+def test_export_section_times(tmp_path, course_dir):
+    (course_dir / "corners.toml").write_text(
+        '[[corner]]\nid = "T1"\nname = "一"\ns_start = 20\ns_end = 40\n',
+        encoding="utf-8",
+    )
+    full = lap_rows("racechrono", "rc1", 1, True, S, S / 10)
+    part = lap_rows("racechrono", "rc1", 2, False, S[:56], S[:56] / 10)
+    write(tmp_path / "data", full, part)
+    doc = export.export_course(tmp_path / "data", course_dir)
+    assert [s["id"] for s in doc["sections"]] == ["→T1", "T1", "T1→"]
+    assert doc["min_diff_s"] == export.MIN_DIFF_S
+    laps = laps_by_label(doc)
+
+    times = laps["racechrono rc1 #1"]["section_times"]
+    assert times == [pytest.approx(2.0), pytest.approx(2.0), pytest.approx(6.0)]
+    # 境界を共有するので、合計は周の t の始めから終わりまでと一致する
+    t = laps["racechrono rc1 #1"]["t"]
+    assert sum(times) == pytest.approx(t[100] - t[0])
+
+    # s = 0〜55 だけの断片：最後の直線に欠けがある
+    assert laps["racechrono rc1 #2"]["section_times"] == [pytest.approx(2.0), pytest.approx(2.0), None]
+
+
+def test_export_no_sections(data_dir, course_dir):
+    doc = export.export_course(data_dir, course_dir)
+    assert doc["sections"] is None
+    assert all(lap["section_times"] is None for lap in doc["laps"])

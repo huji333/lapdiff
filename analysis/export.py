@@ -35,6 +35,15 @@
   `ax` からはボトムの位置と区別できない。実際のアクセルはもっと早い。2026-11-14 の AC では、
   `throttle` が 50% を超える点がボトムより 40〜90 m 手前のコーナーがあった（T2、T3、T4、T7）。
   `throttle` のある周（AC、CAN のある実車）では、ペダルから出す。
+- `sections`：1 周を隙間なく覆う区間。`corners.toml` のコーナーと、その間の直線（計測線の前後を含む）。
+  境界は `s` の格子の整数で、前の区間の終点と次の区間の始点が同じ点になる。
+  長さが `SECTION_MERGE` m 以下の隙間は直線にせず、前のコーナーの終点を延ばして吸収する（計測線の直後なら
+  最初のコーナーの始点を 0 にする）。区間ごとの損失を順位にするとき、数 m の区間が並ぶのを避ける。
+  `corner_stats` の区間（`corners.toml` のまま）とは、延ばした分だけ違うことがある。
+- `section_times`：周ごと・区間ごと（`sections` と同じ順）の区間タイム `t[s_end] - t[s_start]`。
+  区間の格子に 1 点でも欠けがあれば null。境界を共有するので、全区間の合計は `t[grid_max] - t[0]` に一致する。
+  区間ごとの自己ベストは web view が `section_times` の最小から求める（書き出さない）。
+- `min_diff_s`：区間タイムの差をこれ未満なら「差なし」とみなすしきい値 [s]（仮の値）。web view が読む。
 - データの場所に別のコースの周が混ざっていれば `data.check_length` で失敗させる。
   `s` が格子の整数でない行、同じ周で `s` が重なる行、NaN も失敗させる。
 """
@@ -55,6 +64,10 @@ from ingest.track import TRACK_DIR, load_refline
 BRAKE_G = 0.3
 BRAKE_LOOKBACK = 250.0
 DIGITS = {"t": 3, "speed_kmh": 2, "x": 2, "y": 2, "ax": 3, "ay": 3, "offset": 2, "throttle": 3, "brake": 3}
+# 区間タイムの差を「差なし」とみなすしきい値 [s]。実車の GPS では低速コーナーの区間タイムが 0.05〜0.1 s ぶれる
+MIN_DIFF_S = 0.05
+# これ以下の長さ [m] の隙間は直線の区間にせず、前のコーナーに含める
+SECTION_MERGE = 10
 LAP_META = ["label", "source", "session_id", "lap", "lap_valid", "complete", "t_end"]
 
 
@@ -120,6 +133,44 @@ def corner_stats(lap: dict, corners) -> list[dict]:
     return out
 
 
+def sections(corners, grid_max: int) -> list[dict]:
+    """コーナーと、その間の直線で 0〜`grid_max` を隙間なく覆う区間。境界は格子の整数。"""
+    out: list[dict] = []
+    prev_end = 0
+    for c in corners:
+        a, b = math.ceil(c.s_start), math.floor(c.s_end)
+        if a - prev_end > SECTION_MERGE:
+            prev = out[-1]["id"] if out else None
+            out.append(_straight(prev, c.id, prev_end, a))
+        elif out:
+            out[-1]["s_end"] = a
+        else:
+            a = 0
+        out.append({"id": c.id, "kind": "corner", "name": c.name, "s_start": a, "s_end": b})
+        prev_end = b
+    if grid_max - prev_end > SECTION_MERGE:
+        out.append(_straight(out[-1]["id"] if out else None, None, prev_end, grid_max))
+    elif out:
+        out[-1]["s_end"] = grid_max
+    return out
+
+
+def _straight(prev: str | None, nxt: str | None, a: int, b: int) -> dict:
+    """`prev` の後、`nxt` の前の直線。`None` は計測線。"""
+    sid = f"{prev or ''}→{nxt or ''}"
+    name = f"{prev or '計測線'}→{nxt or '計測線'}"
+    return {"id": sid, "kind": "straight", "name": name, "s_start": a, "s_end": b}
+
+
+def section_times(lap: dict, secs: list[dict]) -> list[float | None]:
+    """`lap` は書き出す形の周。区間の格子に欠けがあれば null。"""
+    out: list[float | None] = []
+    for sec in secs:
+        t = lap["t"][sec["s_start"] : sec["s_end"] + 1]
+        out.append(round(t[-1] - t[0], DIGITS["t"]) if all(x is not None for x in t) else None)
+    return out
+
+
 def export_course(data_dir: Path, course_dir: Path) -> dict:
     """`data_dir` の全周を、`course_dir` の基準線とコーナーに合わせて書き出す形にする。"""
     line = load_refline(course_dir)
@@ -128,6 +179,7 @@ def export_course(data_dir: Path, course_dir: Path) -> dict:
     # corners.toml はコースによってはまだない。ないときは null にして、web view は帯を描かない
     has_corners = (course_dir / "corners.toml").exists()
     corners = load_corners(course_dir) if has_corners else None
+    secs = None if corners is None else sections(corners, grid_max)
 
     con = data.open_db(data_dir)
     laps = data.lap_list(con)
@@ -155,6 +207,7 @@ def export_course(data_dir: Path, course_dir: Path) -> dict:
         for col, digits in DIGITS.items():
             meta[col] = _column(idx, g[col].to_list(), digits, n)
         meta["corner_stats"] = None if corners is None else corner_stats(meta, corners)
+        meta["section_times"] = None if secs is None else section_times(meta, secs)
         out_laps.append(meta)
 
     return {
@@ -176,8 +229,10 @@ def export_course(data_dir: Path, course_dir: Path) -> dict:
             }
             for c in corners
         ],
+        "sections": secs,
         "default_ref": data.default_ref(laps),
         "brake_g": BRAKE_G,
+        "min_diff_s": MIN_DIFF_S,
         "laps": out_laps,
     }
 

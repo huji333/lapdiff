@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  bestPool,
+  lossVsBest,
+  miniBounds,
+  minPerIndex,
+  sectorTimes,
   checkCourse,
   cornerWindow,
   defaultComparison,
@@ -38,6 +43,7 @@ function lap(label: string, t: (number | null)[], opts: Partial<Lap> = {}): Lap 
     offset: blank,
     throttle: t.map(() => null),
     brake: t.map(() => null),
+    section_times: null,
     corner_stats: null,
     ...opts,
   };
@@ -131,6 +137,8 @@ describe("checkCourse", () => {
     grid_max: 3,
     refline: { s: [0, 1], x: [0, 1], y: [0, 1] },
     corners: null,
+    sections: null,
+    min_diff_s: 0.05,
     default_ref: null,
     brake_g: 0.3,
     laps,
@@ -192,5 +200,31 @@ describe("defaultComparison", () => {
   it("別のソースになければ同じソースの最速周。なければ null", () => {
     expect(defaultComparison([ref, rc2], ref)).toBe(rc2);
     expect(defaultComparison([ref], ref)).toBeNull();
+  });
+});
+
+describe("区間の自己ベスト", () => {
+  it("同じソースの lap_valid の周だけを母集団にする", () => {
+    const a = lap("a", [0]);
+    const b = lap("b", [0], { lap_valid: false });
+    const c = lap("c", [0], { source: "ac" });
+    const d = lap("d", [0]);
+    expect(bestPool([a, b, c, d], a).map((l) => l.label)).toEqual(["a", "d"]);
+  });
+
+  it("区間ごとの最小と、それとの差を求める。null は飛ばす", () => {
+    const best = minPerIndex([[3, null, 5], [2, null, 6]], 3);
+    expect(best).toEqual([2, null, 5]);
+    expect(lossVsBest([3, 1, null], best)).toEqual([1, null, null]);
+  });
+
+  it("ミニセクターの境界は最後の短い区間を前に含める", () => {
+    expect(miniBounds(120, 50)).toEqual([0, 50, 120]);
+    expect(miniBounds(130, 50)).toEqual([0, 50, 100, 130]);
+  });
+
+  it("区間に欠けがあれば null", () => {
+    const l = lap("a", [0, 1, 2, null, 4, 5]);
+    expect(sectorTimes(l, [0, 2, 5])).toEqual([2, null]);
   });
 });

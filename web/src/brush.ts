@@ -12,7 +12,8 @@ import { sRangeInRect, type Lap, type Range, type Refline } from "./data";
 
 /** どのグラフで選んだか。"restored" は描き直しの前の選択で、ドラッグの枠は残っていない。 */
 export type DistanceId = "speed" | "dt" | "ax" | "ay";
-export type Source = DistanceId | "offset" | "pedal" | "map" | "restored";
+/** "panel" は区間ごとの損失のパネル（sections.ts）で区間を押したとき */
+export type Source = DistanceId | "offset" | "pedal" | "map" | "panel" | "restored";
 
 export interface Selection {
   source: Source;

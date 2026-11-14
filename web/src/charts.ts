@@ -82,8 +82,18 @@ export function courseMap(
   laps: Lap[],
   style: (lap: Lap) => LapStyle,
   height: number,
+  /** 基準線をミニセクターごとに塗る色。null なら灰色の 1 本 */
+  paint: { bounds: number[]; color: (string | null)[] } | null = null,
 ): Chart {
   const { refline: line } = doc;
+  // ミニセクターごとに基準線を 1 m 刻みでたどった点。両端を共有させ、つなぎ目に隙間を作らない
+  const painted = paint
+    ? paint.color.flatMap((color, i) => {
+        if (color == null) return [];
+        const pts = d3.range(paint.bounds[i]!, paint.bounds[i + 1]! + 1).map((s) => ({ ...pointAt(line, s), i, color }));
+        return pts;
+      })
+    : [];
   const [x0, x1] = d3.extent(line.x) as [number, number];
   const [y0, y1] = d3.extent(line.y) as [number, number];
   const pad = 0.05 * Math.max(x1 - x0, y1 - y0);
@@ -109,6 +119,7 @@ export function courseMap(
       y: { domain: [y0 - pad, y1 + pad], axis: null },
       marks: [
         Plot.line(line.x, { x: Plot.identity, y: line.y, stroke: "#d0d0d0", strokeWidth: 7 }),
+        Plot.line(painted, { x: "x", y: "y", z: "i", stroke: "color", strokeWidth: 9 }),
         ...laps.map((lap) => Plot.line(lap.x, { x: Plot.identity, y: lap.y, ...style(lap) })),
         Plot.dot(ticks, { x: "x", y: "y", symbol: "plus", stroke: "black", r: 4 }),
         Plot.text(ticks, { x: "x", y: "y", text: (d) => `${d.s}`, dx: 6, dy: -8, textAnchor: "start" }),
