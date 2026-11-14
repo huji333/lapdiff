@@ -23,14 +23,22 @@
     白線と区別できない。そうした縁石は白線として路面に入り、縁石とはみなさない。
   - 縁石：同じ並びの中で、白線の外から `KERB_MAX` m 以内の最も外の赤の画素までを縁石とする。
     写真は約 0.5 m/px でぼけており、縁石の紅白の縞は分かれず薄い赤の帯に写る（T5 で幅約 1.5〜2 m）。
-  - 縁石の平滑化（`kerb_widths`）：前後 `KERB_WIN` 点のうち `KERB_HITS` 点以上で赤が見つかれば縁石があるとし、
-    幅は赤が見つかった点の幅の中央値。縁石は短いので、路面の端（10 m の中央値）より狭い窓にする。
-    はぐれた赤の画素 1 つ（看板・車など）は `KERB_HITS` で捨てる。
+    - くすんだアスファルト：アスファルトの端から外へ暗い灰色（灰色のうち明るさ `LUM_MAX` 未満）が途切れずに続く所は、
+    白線を探す起点をその外側までずらす（`LINE_SEARCH` はそこから測る）。okayama の T8 の頂点の内側
+    （s = 2895〜2917）では、白線の手前 2〜3 m のアスファルトが青みを失って（B - R = -1〜7）路面の判定から外れ、
+    白線が `LINE_SEARCH` の外になって、路面の端が 2〜4 m 内側に切れ込んでいた。
+- 縁石の平滑化（`kerb_widths`）：前後 `KERB_WIN` 点のうち `KERB_HITS` 点以上で赤が見つかれば縁石があるとする。
+  縁石は短いので、路面の端（10 m の中央値）より狭い窓にする。はぐれた赤の画素 1 つ（看板・車など）は
+  `KERB_HITS` で捨てる。`KERB_GAP` 点以下の切れ目は縁石として埋める。幅は、縁石が続く所ごとに 1 つの値
+  （赤が見つかった点の幅の中央値）にする。点ごとの中央値では、外の縁が点ごとに 0.25〜0.75 m 揺れ、
+  写真ではまっすぐな縁石がのこぎりの歯のように描かれた（okayama の T10 の出口）。
 - 幅の取り出し（`band`）：基準線の左向きの法線に沿って ±`REACH` m を `STEP` m 刻みで画素を読む。
   基準線から `START_MAX` m 以内で最も近い路面の画素から始め、左右へ路面が続く所まで伸ばす。
-  `GAP_MAX` m 以下の切れ目（画素の色のばらつき、グリッドの白い印など）は越える。
-  ピットレーンとコースを分ける白線を越えないよう `GAP_MAX` を小さくしている。
-  1 m にすると、okayama の計測線の前後（s = 3440〜17、66〜129）で右の端がピットレーンの外まで伸び、幅が 3〜4 m 増えた。
+  `GAP_MAX` m 以下の切れ目（画素の色のばらつき）は越えるが、白の画素（`paint_masks`）では止まる。
+  白線の先にまたアスファルトがある所（ピットレーンとの間の白線、走路の外の舗装した道）で、細い白線を越えて
+  路面を広げないためである。白で止めないと、okayama の T1 の進入（s = 68〜124、ピットの出口の合流）と
+  T3 の出口（s = 1382〜1449）で、右の端が白線の外の舗装まで伸び（最大 4.75 m）、
+  白線を越えるかどうかが点ごとに変わって端がジグザグになった。
 - 端は基準線からの符号付きの距離 [m] で持つ。`left_m` は左の端の位置（左が正）、`right_m` は右の端の位置を
   右を正として測った値。`left_kerb_m`・`right_kerb_m` は縁石の外の線で、同じ向きに測る。縁石のない所では路面の端と同じ値。基準線は路面の中心ではなく、路面の外を通る所もある（2026-11 の okayama では
   `s` の 17%、最大 3.5 m）。そのため端の値が負になることがある（例：`left_m = -1` は左の端が基準線の 1 m 右）。
@@ -82,6 +90,7 @@ LINE_MAX = 0.75
 KERB_MAX = 2.5
 KERB_WIN = 3
 KERB_HITS = 3
+KERB_GAP = 8
 WIDTH_MIN = 8.0
 WIDTH_MAX = 20.0
 SIDE_MIN = -4.0
@@ -94,10 +103,10 @@ def road_mask(rgb: np.ndarray) -> np.ndarray:
     return (rgb.mean(axis=-1) < LUM_MAX) & (rgb[..., 2] - rgb[..., 0] >= BLUE_MIN)
 
 
-def band(road: np.ndarray, offs: np.ndarray) -> tuple[float, float]:
-    """法線上の路面の判定 `road`（横の位置 `offs` [m] ごと、左が正）から (left_m, right_m)。
+def band(road: np.ndarray, white: np.ndarray, offs: np.ndarray) -> tuple[float, float]:
+    """法線上の路面の判定 `road` と白の判定 `white`（横の位置 `offs` [m] ごと、左が正）から (left_m, right_m)。
 
-    `START_MAX` m 以内に路面がなければ (nan, nan)。
+    `START_MAX` m 以内に路面がなければ (nan, nan)。白の画素では切れ目の長さによらず止まる。
     """
     near = np.flatnonzero(road & (np.abs(offs) <= START_MAX))
     if near.size == 0:
@@ -111,6 +120,8 @@ def band(road: np.ndarray, offs: np.ndarray) -> tuple[float, float]:
             i += step
             if road[i]:
                 last, gap = i, 0
+            elif white[i]:
+                break
             else:
                 gap += 1
                 if gap > max_gap:
@@ -120,11 +131,11 @@ def band(road: np.ndarray, offs: np.ndarray) -> tuple[float, float]:
     return walk(1), -walk(-1)
 
 
-def paint_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """画素（最後の軸が R, G, B）が (白, 縁石の赤, 色のない灰色) か。3 つは重ならない。
+def paint_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """画素（最後の軸が R, G, B）が (白, 縁石の赤, 色のない灰色, 暗い灰色) か。初めの 3 つは重ならない。
 
     灰色は白より暗い無彩色（くすんだアスファルト・白線のぼけた縁・舗装した退避帯）。白線・縁石を探すとき、
-    切れ目に数えずに越える。
+    切れ目に数えずに越える。暗い灰色は灰色のうち明るさが `LUM_MAX` 未満の画素（青みを失ったアスファルト）。
     """
     rgb = np.asarray(rgb, dtype=np.float64)
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
@@ -132,16 +143,18 @@ def paint_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     red = (r - g >= RED_RG) & (r - b >= RED_RB) & (lum < RED_LUM)
     neutral = (rgb.max(axis=-1) - rgb.min(axis=-1) <= WHITE_SAT) & (r - b <= WHITE_RB) & ~red
     white = neutral & (lum >= WHITE_LUM)
-    return white, red, neutral & ~white
+    grey = neutral & ~white
+    return white, red, grey, grey & (lum < LUM_MAX)
 
 
-def rim(white: np.ndarray, red: np.ndarray, grey: np.ndarray, offs: np.ndarray, edge: float,
+def rim(white: np.ndarray, red: np.ndarray, grey: np.ndarray, dark: np.ndarray, offs: np.ndarray, edge: float,
         sign: int) -> tuple[float, float]:
     """アスファルトの端 `edge`（`offs` 上の位置 [m]）から `sign` の向き（+1 が左）に白線と縁石を読む。
 
     (白線を含めた路面の端, 縁石の外の線) を `offs` 上の位置で返す。白線がなければ前者は `edge`、
     赤がなければ後者は nan。白・赤・灰色が続く所だけを読み、それ以外が `GAP_MAX` m を超えて続けば止める。
     白線は、アスファルトの端から `LINE_SEARCH` m 以内で始まる最初の白の並びで、幅は `LINE_MAX` m まで。
+    アスファルトの端から暗い灰色 `dark` が途切れずに続く所は、`LINE_SEARCH` をその外側から測る。
     縁石の外の線は、白線の外から `KERB_MAX` m 以内の最も外の赤。
     """
     if not math.isfinite(edge):
@@ -152,13 +165,17 @@ def rim(white: np.ndarray, red: np.ndarray, grey: np.ndarray, offs: np.ndarray, 
     line_start = line_end = math.nan
     reds: list[float] = []
     gap = 0
+    base, dusty = 0.0, True
     while 0 <= i + sign < len(offs):
         i += sign
         d = (offs[i] - edge) * sign
-        if d > LINE_SEARCH + LINE_MAX + KERB_MAX + eps:
+        dusty = dusty and bool(dark[i])
+        if dusty:
+            base = d
+        if d > base + LINE_SEARCH + LINE_MAX + KERB_MAX + eps:
             break
         if white[i] and not reds:
-            if math.isnan(line_start) and d <= LINE_SEARCH + eps:
+            if math.isnan(line_start) and d <= base + LINE_SEARCH + eps:
                 line_start = line_end = d
             elif abs(line_end - (d - STEP)) < eps and d - line_start <= LINE_MAX + eps:
                 line_end = d
@@ -175,17 +192,34 @@ def rim(white: np.ndarray, red: np.ndarray, grey: np.ndarray, offs: np.ndarray, 
     return edge + sign * paved, (edge + sign * max(kerb)) if kerb else math.nan
 
 
-def kerb_widths(paved: np.ndarray, kerb: np.ndarray, win: int = KERB_WIN, hits: int = KERB_HITS) -> np.ndarray:
+def runs(mask: np.ndarray) -> list[np.ndarray]:
+    """閉じた線の上で `mask` が True の所が続く区間ごとの添字（s = 0 をまたぐ区間は 1 つにまとめる）。"""
+    n = len(mask)
+    if mask.all():
+        return [np.arange(n)]
+    order = (np.arange(n) + int(np.flatnonzero(~mask)[0])) % n  # False から始めて、区間を途中で切らない
+    m = mask[order]
+    edges_ = np.flatnonzero(np.diff(np.r_[0, m.astype(int), 0]))
+    return [order[a:b] for a, b in zip(edges_[::2], edges_[1::2])]
+
+
+def kerb_widths(paved: np.ndarray, kerb: np.ndarray, win: int = KERB_WIN, hits: int = KERB_HITS,
+                max_gap: int = KERB_GAP) -> np.ndarray:
     """縁石の幅 [m]（路面の端から外へ、0 以上）。`paved` は平滑化した路面の端、`kerb` は各点の縁石の外の線
-    （同じ向きに測った値、赤がなければ nan）。閉じた線として前後 `win` 点で見る。"""
+    （同じ向きに測った値、赤がなければ nan）。閉じた線として前後 `win` 点で見る。
+    `max_gap` 点以下の切れ目は埋め、縁石が続く区間ごとに幅を 1 つの値（区間の中の幅の中央値）にする。"""
     w = np.where(np.isfinite(kerb), np.clip(kerb - paved, 0.0, None), np.nan)
     n = len(w)
     idx = (np.arange(n)[:, None] + np.arange(-win, win + 1)) % n
-    ww = w[idx]
-    found = np.isfinite(ww).sum(axis=1) >= hits
+    found = np.isfinite(w[idx]).sum(axis=1) >= hits
     out = np.zeros(n)
-    if found.any():
-        out[found] = np.nanmedian(ww[found], axis=1)
+    if not found.any():
+        return out
+    for gap in runs(~found):
+        if len(gap) <= max_gap:
+            found[gap] = True
+    for run in runs(found):
+        out[run] = np.nanmedian(w[run])
     return out
 
 
@@ -303,12 +337,12 @@ def raw_edges(line: Refline, mosaic: Mosaic) -> dict[str, np.ndarray]:
     rx, ry, nx, ny = frame(line, line.s)
     rgb = mosaic.sample(rx[:, None] + offs * nx[:, None], ry[:, None] + offs * ny[:, None])
     road = road_mask(rgb)
-    white, red, grey = paint_masks(rgb)
+    white, red, grey, dark = paint_masks(rgb)
     out = []
-    for r, w, k, g in zip(road, white, red, grey):
-        left, right = band(r, offs)
-        ll, lk = rim(w, k, g, offs, left, 1)
-        rl, rk = rim(w, k, g, offs, -right, -1)
+    for r, w, k, g, dk in zip(road, white, red, grey, dark):
+        left, right = band(r, w, offs)
+        ll, lk = rim(w, k, g, dk, offs, left, 1)
+        rl, rk = rim(w, k, g, dk, offs, -right, -1)
         out.append((ll, -rl, lk, -rk))
     a = np.array(out)
     return {"left": a[:, 0], "right": a[:, 1], "left_kerb": a[:, 2], "right_kerb": a[:, 3]}
@@ -343,14 +377,16 @@ def main(argv: list[str]) -> None:
         f"tiles = {TILE_URL.format(z=ZOOM, x='{x}', y='{y}')}、zoom = {ZOOM}、"
         f"{mosaic.tiles[0]}x{mosaic.tiles[1]} 枚、取得日 {mosaic.fetched[0]}〜{mosaic.fetched[1]}\n"
         f"路面の画素：明るさ < {LUM_MAX:g}、B - R >= {BLUE_MIN:g}。法線上 ±{REACH:g} m を {STEP:g} m 刻み、"
-        f"始点は基準線から {START_MAX:g} m 以内、{GAP_MAX:g} m 以下の切れ目は越える\n"
+        f"始点は基準線から {START_MAX:g} m 以内、{GAP_MAX:g} m 以下の切れ目は越える（白の画素では止まる）\n"
         f"白線と縁石：アスファルトの端から外へ白・赤・灰色の画素が続く所を読む。"
         f"白は明るさ >= {WHITE_LUM:g}、彩度 <= {WHITE_SAT:g}、R - B <= {WHITE_RB:g}（灰色は明るさだけ満たさない画素）。"
         f"赤は R - G >= {RED_RG:g}、R - B >= {RED_RB:g}、明るさ < {RED_LUM:g}。"
         f"白線（アスファルトの端から {LINE_SEARCH:g} m 以内で始まる最初の白の並び、幅 {LINE_MAX:g} m まで）は"
-        f"路面（left_m・right_m、走路の限界は白線の外側）に含める\n"
+        f"路面（left_m・right_m、走路の限界は白線の外側）に含める。アスファルトの端から暗い灰色（明るさ < {LUM_MAX:g}）が"
+        f"続く所は、その外側から {LINE_SEARCH:g} m を測る\n"
         f"left_kerb_m・right_kerb_m は縁石の外の線（白線の外から {KERB_MAX:g} m 以内の最も外の赤）。縁石のない所は路面の端と同じ。"
-        f"前後 {KERB_WIN} 点（計 {2 * KERB_WIN + 1} 点）のうち {KERB_HITS} 点以上で赤があれば縁石とし、幅は赤のあった点の中央値\n"
+        f"前後 {KERB_WIN} 点（計 {2 * KERB_WIN + 1} 点）のうち {KERB_HITS} 点以上で赤があれば縁石とし、{KERB_GAP} 点以下の切れ目は埋める。"
+        f"幅は縁石が続く区間ごとに 1 つの値（赤のあった点の幅の中央値）\n"
         f"外れ値：幅 {WIDTH_MIN:g}〜{WIDTH_MAX:g} m の外、片側 {SIDE_MIN:g} m 未満を捨てる。"
         f"前後 {SMOOTH} 点（{SMOOTH * line.length / len(line.s):.0f} m）の中央値で平滑化"
     )

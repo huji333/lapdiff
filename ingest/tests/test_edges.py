@@ -20,6 +20,10 @@ def profile(spans):
     return rgb
 
 
+def band(rgb):
+    return edges.band(edges.road_mask(rgb), edges.paint_masks(rgb)[0], OFFS)
+
+
 def test_road_mask():
     img = np.array([[ASPHALT, GRASS], [PAINT, (60, 60, 60)]], dtype=np.uint8)
     np.testing.assert_array_equal(edges.road_mask(img), [[True, False], [False, False]])
@@ -27,24 +31,30 @@ def test_road_mask():
 
 def test_band_signed():
     # 路面は基準線の右 2 m 〜 左 8 m（基準線は路面の上）
-    left, right = edges.band(edges.road_mask(profile([(-2, 8, ASPHALT)])), OFFS)
+    left, right = band(profile([(-2, 8, ASPHALT)]))
     assert (left, right) == (8.0, 2.0)
     # 路面が基準線の左 1〜11 m（基準線は路面の外。右の端は負）
-    left, right = edges.band(edges.road_mask(profile([(1, 11, ASPHALT)])), OFFS)
+    left, right = band(profile([(1, 11, ASPHALT)]))
     assert (left, right) == (11.0, -1.0)
 
 
 def test_band_no_road_near():
-    left, right = edges.band(edges.road_mask(profile([(6, 12, ASPHALT)])), OFFS)
+    left, right = band(profile([(6, 12, ASPHALT)]))
     assert math.isnan(left) and math.isnan(right)
 
 
 def test_band_gap():
-    # GAP_MAX 以下の切れ目は越え、それより広い切れ目（ピットレーンとの白線を想定）で止まる
-    narrow = profile([(-5, 5, ASPHALT), (2, 2 + edges.GAP_MAX - edges.STEP, PAINT)])
-    assert edges.band(edges.road_mask(narrow), OFFS) == (5.0, 5.0)
-    wide = profile([(-5, 12, ASPHALT), (3, 3 + edges.GAP_MAX + edges.STEP, PAINT)])
-    assert edges.band(edges.road_mask(wide), OFFS)[0] == pytest.approx(3 - edges.STEP)
+    # GAP_MAX 以下の切れ目（白でない色のばらつき）は越え、それより広い切れ目で止まる
+    narrow = profile([(-5, 5, ASPHALT), (2, 2 + edges.GAP_MAX - edges.STEP, GRASS)])
+    assert band(narrow) == (5.0, 5.0)
+    wide = profile([(-5, 12, ASPHALT), (3, 3 + edges.GAP_MAX + edges.STEP, GRASS)])
+    assert band(wide)[0] == pytest.approx(3 - edges.STEP)
+
+
+def test_band_stops_at_white():
+    # 白は GAP_MAX より細くても越えない（ピットレーンとの白線の先のアスファルトを路面にしない）
+    rgb = profile([(-5, 12, ASPHALT), (3, 3 + edges.GAP_MAX - edges.STEP, PAINT)])
+    assert band(rgb)[0] == pytest.approx(3 - edges.STEP)
 
 
 def test_clean_fills_short_gaps_and_rejects_outliers():
@@ -96,7 +106,8 @@ def test_tile_xy():
 KERB_RED = (200, 187, 184)  # R - G = 13、R - B = 16
 LINE_WHITE = (232, 226, 228)
 RUNOFF = (214, 211, 205)  # 舗装した退避帯（T1・T5 の外）。明るく、色がほとんどない
-DUSTY = (150, 150, 154)  # くすんだアスファルト・白線のぼけた縁
+DUSTY = (150, 150, 154)  # くすんだアスファルト（暗い灰色）
+PALE = (172, 168, 167)  # 白線のぼけた縁（暗くない灰色）
 
 
 def masks(spans):
@@ -104,56 +115,69 @@ def masks(spans):
 
 
 def test_paint_masks_classes():
-    white, red, grey = edges.paint_masks(np.array([KERB_RED, LINE_WHITE, RUNOFF, DUSTY, GRASS, ASPHALT, (171, 166, 146)]))
-    np.testing.assert_array_equal(red, [True, False, False, False, False, False, False])
-    np.testing.assert_array_equal(white, [False, True, True, False, False, False, False])
+    white, red, grey, dark = edges.paint_masks(
+        np.array([KERB_RED, LINE_WHITE, RUNOFF, DUSTY, GRASS, ASPHALT, (171, 166, 146), PALE]))
+    np.testing.assert_array_equal(red, [True, False, False, False, False, False, False, False])
+    np.testing.assert_array_equal(white, [False, True, True, False, False, False, False, False])
     # 黄みの土（R - B = 25）は白にも灰色にもしない
-    np.testing.assert_array_equal(grey, [False, False, False, True, False, True, False])
+    np.testing.assert_array_equal(grey, [False, False, False, True, False, True, False, True])
+    # 暗い灰色は明るさ LUM_MAX 未満の灰色だけ
+    np.testing.assert_array_equal(dark, [False, False, False, True, False, True, False, False])
 
 
 def test_rim_white_line_only():
     # アスファルトの端 5 m、白線 5.25〜5.5 m、外は芝。路面の端は白線の外側
-    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE)])
-    assert edges.rim(w, r, g, OFFS, 5.0, 1) == (5.5, pytest.approx(math.nan, nan_ok=True))
+    p = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE)])
+    assert edges.rim(*p, OFFS, 5.0, 1) == (5.5, pytest.approx(math.nan, nan_ok=True))
     # 右へも同じ（右の端は負の位置）
-    w, r, g = masks([(-5, 5, ASPHALT), (-5.5, -5.25, LINE_WHITE)])
-    line, kerb = edges.rim(w, r, g, OFFS, -5.0, -1)
+    p = masks([(-5, 5, ASPHALT), (-5.5, -5.25, LINE_WHITE)])
+    line, kerb = edges.rim(*p, OFFS, -5.0, -1)
     assert line == -5.5 and math.isnan(kerb)
 
 
 def test_rim_line_capped_on_white_runoff():
     # 白線の外に白い舗装が続いても、路面に含めるのは白の並びの始まりから LINE_MAX まで
-    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 9, RUNOFF)])
-    line, kerb = edges.rim(w, r, g, OFFS, 5.0, 1)
+    p = masks([(-5, 5, ASPHALT), (5.25, 9, RUNOFF)])
+    line, kerb = edges.rim(*p, OFFS, 5.0, 1)
     assert line == pytest.approx(5.25 + edges.LINE_MAX) and math.isnan(kerb)
 
 
 def test_rim_crosses_grey_to_reach_line():
     # アスファルトの外側 1 m がくすんだ灰色でも、その先の白線まで読む
-    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 6.25, DUSTY), (6.5, 6.75, LINE_WHITE)])
-    assert edges.rim(w, r, g, OFFS, 5.0, 1)[0] == 6.75
-    # LINE_SEARCH より遠い白は白線とみなさない
+    p = masks([(-5, 5, ASPHALT), (5.25, 6.25, DUSTY), (6.5, 6.75, LINE_WHITE)])
+    assert edges.rim(*p, OFFS, 5.0, 1)[0] == 6.75
+    # 暗くない灰色を挟んで LINE_SEARCH より遠い白は白線とみなさない
     far = 5 + edges.LINE_SEARCH + 0.5
-    w, r, g = masks([(-5, 5, ASPHALT), (5.25, far - 0.25, DUSTY), (far, far + 0.25, LINE_WHITE)])
-    assert edges.rim(w, r, g, OFFS, 5.0, 1)[0] == 5.0
+    p = masks([(-5, 5, ASPHALT), (5.25, far - 0.25, PALE), (far, far + 0.25, LINE_WHITE)])
+    assert edges.rim(*p, OFFS, 5.0, 1)[0] == 5.0
 
 
 def test_rim_kerb_outside_line():
     # 白線 0.5 m、赤い縁石 1.5 m、その外は白い退避帯。縁石の外の線は最も外の赤
-    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE), (5.75, 7.25, KERB_RED), (7.5, 10, RUNOFF)])
-    assert edges.rim(w, r, g, OFFS, 5.0, 1) == (5.5, 7.25)
+    p = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE), (5.75, 7.25, KERB_RED), (7.5, 10, RUNOFF)])
+    assert edges.rim(*p, OFFS, 5.0, 1) == (5.5, 7.25)
 
 
 def test_rim_kerb_limits():
     # 芝で切れた先の赤（看板など）は縁石にしない
-    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE), (7, 7.5, KERB_RED)])
-    assert math.isnan(edges.rim(w, r, g, OFFS, 5.0, 1)[1])
+    p = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE), (7, 7.5, KERB_RED)])
+    assert math.isnan(edges.rim(*p, OFFS, 5.0, 1)[1])
     # 白線の外から KERB_MAX を超える赤は数えない
-    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE), (5.75, 9, KERB_RED)])
-    assert edges.rim(w, r, g, OFFS, 5.0, 1)[1] == pytest.approx(5.5 + edges.KERB_MAX)
+    p = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE), (5.75, 9, KERB_RED)])
+    assert edges.rim(*p, OFFS, 5.0, 1)[1] == pytest.approx(5.5 + edges.KERB_MAX)
     # アスファルトの端が取れていなければ何も読まない
-    line, kerb = edges.rim(w, r, g, OFFS, math.nan, 1)
+    line, kerb = edges.rim(*p, OFFS, math.nan, 1)
     assert math.isnan(line) and math.isnan(kerb)
+
+
+def test_rim_line_search_starts_past_dusty_asphalt():
+    # 青みを失った暗いアスファルトが 2.5 m 続き、明るい灰色を挟んで白線（okayama の T8 の頂点の内側）
+    far = 5 + 2.5 + 0.75
+    p = masks([(-5, 5, ASPHALT), (5.25, 7.5, DUSTY), (7.75, far - 0.25, PALE), (far, far + 0.5, LINE_WHITE)])
+    assert edges.rim(*p, OFFS, 5.0, 1)[0] == far + 0.5
+    # 間に暗くない灰色があれば、その外の暗い灰色では起点をずらさない
+    p = masks([(-5, 5, ASPHALT), (5.25, 5.5, PALE), (5.75, 7.5, DUSTY), (far, far + 0.5, LINE_WHITE)])
+    assert edges.rim(*p, OFFS, 5.0, 1)[0] == 5.0
 
 
 def test_kerb_widths_fills_stripes_and_drops_strays():
@@ -180,3 +204,27 @@ def test_kerb_widths_wraps_and_clips():
     w = edges.kerb_widths(paved, kerb)
     assert w[0] == 1.0 and w[49] == 1.0
     np.testing.assert_allclose(w[20:25], 0.0)
+
+
+def test_kerb_widths_one_width_per_run_and_fills_gaps():
+    n = 100
+    paved = np.full(n, 5.0)
+    kerb = np.full(n, np.nan)
+    # 縁石 20〜60：幅が 1.0〜1.5 m で点ごとに揺れ、40〜45 で赤が見つからない
+    kerb[20:61] = 5.0 + np.where(np.arange(20, 61) % 2, 1.0, 1.5)
+    kerb[40:46] = np.nan
+    w = edges.kerb_widths(paved, kerb)
+    found = w > 0
+    assert found[23:58].all()
+    assert np.unique(w[found]).size == 1
+    # KERB_GAP 点より長い切れ目は埋めない
+    kerb[40:40 + edges.KERB_GAP + 2 * edges.KERB_WIN + 1] = np.nan
+    w = edges.kerb_widths(paved, kerb)
+    assert w[40 + edges.KERB_WIN + 1] == 0.0
+
+
+def test_runs_wraps():
+    m = np.array([True, True, False, True, False, True])
+    assert [r.tolist() for r in edges.runs(m)] == [[3], [5, 0, 1]]
+    assert [r.tolist() for r in edges.runs(np.ones(3, bool))] == [[0, 1, 2]]
+    assert edges.runs(np.zeros(3, bool)) == []
