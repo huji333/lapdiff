@@ -1,0 +1,13 @@
+# AC のワールド座標の水平面 (x, -z) から局所座標（ENU）への相似変換。ingest.ac_transform が書く。
+# p_enu = scale * R(rotation_deg) @ (x, -z) + (tx, ty)
+ac_track = "okayama"
+ac_config = "circuit_gp"
+scale = 1.004974
+rotation_deg = -89.9412
+tx = 8.021
+ty = 115.406
+
+# 推定の出どころ。基準線ができたら、基準線に合わせて推定し直す
+fit_target = "racechrono okayama_laps1-2.csv lap 2"
+fit_source = "okayama_mx5nd_lap2.acraw.gz"
+fit_residual_m = { median = 1.52, p95 = 4.35, max = 6.04 }

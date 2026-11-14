@@ -8,9 +8,7 @@
 - タイムスタンプが重複した行は、最初の行だけを残す。
 - ラップは `lap_number` で分ける。最初の周より前の空欄はアウトラップとして `lap = 0` にする。
   各周の開始時刻はその周の最初の行（RaceChrono が計測線の通過時刻に行を挿入している）。
-- `lap_valid`：次の周が始まっている（周回が閉じている）`lap >= 1` の周のうち、
-  タイムが最速周の 107% 以内のもの。アウトラップ、最後の周（インラップか途中の周）、
-  極端に遅い周は false になる。
+- `lap_valid`：`ingest.laps.lap_table` の規則（閉じた周で、最速周の 107% 以内）。
 - 局所座標：`track/<course>/origin.toml` の固定原点を使う ENU（x 東、y 北 [m]）。
   セッションをまたいで同じ座標系にし、基準線と重ねられるようにするため、最初の測位点は使わない。
 - `session_id`：最初の行の時刻（UTC）を `%Y%m%dT%H%M%SZ` で表したもの。
@@ -29,11 +27,11 @@ import numpy as np
 import polars as pl
 
 from ingest.derive import derive
+from ingest.laps import lap_table
 from ingest.schema import COMMON_SCHEMA, JOIN_KEYS, write_session
 
 SOURCE = "racechrono"
 SUPPORTED_FORMATS = {"3"}
-SLOW_FACTOR = 1.07
 TRACK_DIR = Path(__file__).resolve().parents[1] / "track"
 
 TS = "timestamp|"
@@ -161,22 +159,14 @@ def lap_numbers(data: pl.DataFrame) -> pl.Series:
     return lap.alias("lap")
 
 
-def lap_table(ts: pl.Series, lap: pl.Series) -> pl.DataFrame:
-    """周ごとの開始時刻・タイム・`lap_valid`。"""
-    laps = (
+def lap_starts(ts: pl.Series, lap: pl.Series) -> pl.DataFrame:
+    """周ごとの開始時刻。`lap >= 1` の周は最初の行が計測線の通過（RaceChrono が挿入する行）。"""
+    return (
         pl.DataFrame({"lap": lap, "ts": ts})
         .group_by("lap", maintain_order=True)
         .agg(pl.col("ts").first().alias("t_start"))
-        .with_columns(t_next=pl.col("t_start").shift(-1))
-        .with_columns(
-            closed=pl.col("t_next").is_not_null(),
-            lap_time=pl.col("t_next") - pl.col("t_start"),
-        )
+        .with_columns(start_seen=pl.col("lap") >= 1)
     )
-    timed = (pl.col("lap") >= 1) & pl.col("closed")
-    best = laps.filter(timed)["lap_time"].min()
-    valid = timed & (pl.col("lap_time") <= SLOW_FACTOR * best) if best is not None else pl.lit(False)
-    return laps.select("lap", "t_start", "lap_time", "closed", lap_valid=valid)
 
 
 def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
@@ -189,7 +179,7 @@ def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
     ts = data[TS]
     session_id = datetime.fromtimestamp(ts[0], UTC).strftime("%Y%m%dT%H%M%SZ")
     lap = lap_numbers(data)
-    laps = lap_table(ts, lap)
+    laps = lap_table(lap_starts(ts, lap))
     starts = laps["t_start"].to_numpy()
 
     def lap_of(t_abs: np.ndarray) -> np.ndarray:

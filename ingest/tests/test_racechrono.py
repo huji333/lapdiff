@@ -67,7 +67,8 @@ def test_duplicate_timestamps_dropped(session):
 def test_lap_split(session):
     laps = session.laps
     assert laps["lap"].to_list() == [0, 1, 2, 3]
-    assert laps["closed"].to_list() == [True, True, True, False]
+    # アウトラップは開始が計測線の通過ではないので閉じていない
+    assert laps["closed"].to_list() == [False, True, True, False]
     assert laps.filter(pl.col("lap") == 2)["lap_time"].item() == pytest.approx(134.26, abs=0.01)
     # 各周の t は 0 から始まる
     first = session.raw.group_by("lap").agg(pl.col("t").min())

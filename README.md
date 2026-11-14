@@ -13,6 +13,16 @@ cd collector
 GOOS=windows GOARCH=amd64 go build -o collector.exe .
 ```
 
+## 取り込み
+
+```sh
+uv run python -m ingest.racechrono <csv> <outdir>
+uv run python -m ingest.acraw <acraw.gz> <outdir>
+
+# AC の座標変換を推定して track/<course>/ac_transform.toml を書く（コースごとに一度）
+uv run python -m ingest.ac_transform <acraw.gz> <racechrono csv> <lap> <course>
+```
+
 ## collector の実行（Windows）
 
 ```bat
