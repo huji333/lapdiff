@@ -1,0 +1,244 @@
+"""コースの端：空中写真から、基準線の各 `s` での路面の左右の端を取り出す。
+
+使い方：`uv run python -m ingest.edges <course>`（`track/<course>/edges.csv` を書く）
+
+- 元の画像は国土地理院の地理院タイル「全国最新写真（シームレス）」（seamlessphoto）のズーム 18
+  （約 0.5 m/px）。基準線の範囲に `MARGIN` m を足した範囲のタイルを `CACHE_DIR` に取得する。
+  キャッシュにあるタイルは取り直さない。書き出した CSV を git に入れ、`analysis.export` はネットワークを使わない。
+- 座標：`track/<course>/origin.toml` の原点の ENU（`ingest.racechrono.to_enu`）を緯度・経度に戻し、
+  Web メルカトルのタイルの画素に置く。写真と GPS の位置合わせの誤差で、端は ±1〜2 m ずれうる。
+- 路面の判定（`road_mask`）：明るさ（RGB の平均）が `LUM_MAX` 未満で、青み（B - R）が `BLUE_MIN` 以上の画素。
+  アスファルトは暗く青みがかり、芝・土・縁石の白は外れる。白線と縁石は路面に含めないので、
+  取り出す端は白線・縁石の内側になる。
+- 幅の取り出し（`band`）：基準線の左向きの法線に沿って ±`REACH` m を `STEP` m 刻みで画素を読む。
+  基準線から `START_MAX` m 以内で最も近い路面の画素から始め、左右へ路面が続く所まで伸ばす。
+  `GAP_MAX` m 以下の切れ目（画素の色のばらつき、グリッドの白い印など）は越える。
+  ピットレーンとコースを分ける白線を越えないよう `GAP_MAX` を小さくしている。
+  1 m にすると、okayama の計測線の前後（s = 3440〜17、66〜129）で右の端がピットレーンの外まで伸び、幅が 3〜4 m 増えた。
+- 端は基準線からの符号付きの距離 [m] で持つ。`left_m` は左の端の位置（左が正）、`right_m` は右の端の位置を
+  右を正として測った値。基準線は路面の中心ではなく、路面の外を通る所もある（2026-11 の okayama では
+  `s` の 17%、最大 3.5 m）。そのため端の値が負になることがある（例：`left_m = -1` は左の端が基準線の 1 m 右）。
+- CSV の頭の `# attribution = ...`・`# attribution_url = ...` は出典の表記で、`analysis.export` がそのまま
+  web view に渡す（地理院タイルを加工して使うときは出典を示す。国土地理院コンテンツ利用規約）。
+- 外れ値の除去（`clean`）：幅（`left_m + right_m`）が `WIDTH_MIN`〜`WIDTH_MAX` m の外、または片側が
+  `SIDE_MIN` m 未満の `s` を捨てる。残りに前後 `SMOOTH` m の中央値をかけ、捨てた所もこの中央値で埋める。
+  中央値の窓に有効な値が 1 つもない所（捨てた所が `2 * SMOOTH` m を超えて続く所）があれば失敗させる。
+"""
+
+import math
+import sys
+import tomllib
+import urllib.request
+from datetime import UTC, datetime
+from io import BytesIO
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+from ingest.racechrono import to_enu
+from ingest.track import TRACK_DIR, Refline, frame, load_refline
+
+ZOOM = 18
+TILE = 256
+LAYER = "seamlessphoto"
+TILE_URL = "https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
+CACHE_DIR = Path.home() / ".cache" / "lapdiff" / "gsi" / LAYER
+USER_AGENT = "lapdiff-edges/0.1"
+ATTRIBUTION = "国土地理院 地理院タイル（全国最新写真（シームレス））を加工して作成"
+ATTRIBUTION_URL = "https://maps.gsi.go.jp/development/ichiran.html"
+
+MARGIN = 50.0
+LUM_MAX = 160.0
+BLUE_MIN = 8.0
+REACH = 15.0
+STEP = 0.25
+START_MAX = 4.0
+GAP_MAX = 0.5
+WIDTH_MIN = 8.0
+WIDTH_MAX = 20.0
+SIDE_MIN = -4.0
+SMOOTH = 10
+
+
+def road_mask(rgb: np.ndarray) -> np.ndarray:
+    """画素（最後の軸が R, G, B）が路面か。"""
+    rgb = np.asarray(rgb, dtype=np.float64)
+    return (rgb.mean(axis=-1) < LUM_MAX) & (rgb[..., 2] - rgb[..., 0] >= BLUE_MIN)
+
+
+def band(road: np.ndarray, offs: np.ndarray) -> tuple[float, float]:
+    """法線上の路面の判定 `road`（横の位置 `offs` [m] ごと、左が正）から (left_m, right_m)。
+
+    `START_MAX` m 以内に路面がなければ (nan, nan)。
+    """
+    near = np.flatnonzero(road & (np.abs(offs) <= START_MAX))
+    if near.size == 0:
+        return math.nan, math.nan
+    i0 = int(near[np.argmin(np.abs(offs[near]))])
+    max_gap = round(GAP_MAX / STEP)
+
+    def walk(step: int) -> float:
+        i, last, gap = i0, i0, 0
+        while 0 <= i + step < len(offs):
+            i += step
+            if road[i]:
+                last, gap = i, 0
+            else:
+                gap += 1
+                if gap > max_gap:
+                    break
+        return float(offs[last])
+
+    return walk(1), -walk(-1)
+
+
+def clean(left: np.ndarray, right: np.ndarray, smooth: int = SMOOTH) -> tuple[np.ndarray, np.ndarray]:
+    """外れ値を捨て、閉じた線として前後 `smooth` 点の中央値をかける。埋められない所があれば失敗させる。"""
+    width = left + right
+    ok = np.isfinite(width) & (width >= WIDTH_MIN) & (width <= WIDTH_MAX)
+    ok &= (left >= SIDE_MIN) & (right >= SIDE_MIN)
+    n = len(left)
+    idx = (np.arange(n)[:, None] + np.arange(-smooth, smooth + 1)) % n
+
+    def med(v: np.ndarray) -> np.ndarray:
+        w = np.where(ok, v, np.nan)[idx]
+        empty = ~np.isfinite(w).any(axis=1)
+        if empty.any():
+            bad = np.flatnonzero(empty)
+            raise ValueError(
+                f"路面の幅が取れない所が {2 * smooth} 点を超えて続く（{bad.size} 点、"
+                f"添字 {bad[0]}〜{bad[-1]}）。写真と基準線の重なりを確かめる"
+            )
+        return np.nanmedian(w, axis=1)
+
+    return med(left), med(right)
+
+
+# --- 座標 ---
+
+def from_enu(x, y, lat0: float, lon0: float) -> tuple[np.ndarray, np.ndarray]:
+    """`to_enu` の逆。接平面の近似から始め、`to_enu` との差で 3 回直す。"""
+    x, y = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+    m_per_lat = 111_000.0
+    m_per_lon = m_per_lat * math.cos(math.radians(lat0))
+    lat, lon = lat0 + y / m_per_lat, lon0 + x / m_per_lon
+    for _ in range(3):
+        ex, ey = to_enu(lat, lon, lat0, lon0)
+        lat, lon = lat + (y - ey) / m_per_lat, lon + (x - ex) / m_per_lon
+    return lat, lon
+
+
+def tile_xy(lat, lon, zoom: int = ZOOM) -> tuple[np.ndarray, np.ndarray]:
+    """緯度・経度 [deg] の、Web メルカトルのタイル座標（整数部がタイル番号、小数部がタイル内の位置）。"""
+    n = 2**zoom
+    lat_r = np.radians(np.asarray(lat, dtype=np.float64))
+    tx = (np.asarray(lon, dtype=np.float64) + 180) / 360 * n
+    ty = (1 - np.arcsinh(np.tan(lat_r)) / math.pi) / 2 * n
+    return tx, ty
+
+
+# --- タイル ---
+
+def tile_path(x: int, y: int, zoom: int = ZOOM, cache: Path = CACHE_DIR) -> Path:
+    return cache / f"{zoom}_{x}_{y}.jpg"
+
+
+def fetch_tile(x: int, y: int, zoom: int = ZOOM, cache: Path = CACHE_DIR) -> Path:
+    path = tile_path(x, y, zoom, cache)
+    if path.exists():
+        return path
+    url = TILE_URL.format(z=zoom, x=x, y=y)
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=30) as res:
+        body = res.read()
+    Image.open(BytesIO(body)).verify()  # JPEG でなければ（エラーの HTML など）ここで失敗する
+    cache.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+    return path
+
+
+class Mosaic:
+    """タイルを貼り合わせた画像と、ENU から画素への変換。"""
+
+    def __init__(self, line: Refline, lat0: float, lon0: float, cache: Path = CACHE_DIR):
+        self.lat0, self.lon0 = lat0, lon0
+        xs = [line.x.min() - MARGIN, line.x.max() + MARGIN]
+        ys = [line.y.min() - MARGIN, line.y.max() + MARGIN]
+        lat, lon = from_enu(np.array([xs[0], xs[1], xs[0], xs[1]]), np.array([ys[0], ys[0], ys[1], ys[1]]),
+                            lat0, lon0)
+        tx, ty = tile_xy(lat, lon)
+        self.x0, self.y0 = int(tx.min()), int(ty.min())
+        nx, ny = int(tx.max()) - self.x0 + 1, int(ty.max()) - self.y0 + 1
+        img = Image.new("RGB", (TILE * nx, TILE * ny))
+        paths = []
+        for i in range(nx):
+            for j in range(ny):
+                p = fetch_tile(self.x0 + i, self.y0 + j, cache=cache)
+                paths.append(p)
+                img.paste(Image.open(p).convert("RGB"), (TILE * i, TILE * j))
+        self.image = img
+        self.rgb = np.asarray(img)
+        self.tiles = (nx, ny)
+        days = sorted(datetime.fromtimestamp(p.stat().st_mtime, UTC).date() for p in paths)
+        self.fetched = (days[0], days[-1])
+
+    def pixel(self, x, y) -> tuple[np.ndarray, np.ndarray]:
+        tx, ty = tile_xy(*from_enu(x, y, self.lat0, self.lon0))
+        return (tx - self.x0) * TILE, (ty - self.y0) * TILE
+
+    def sample(self, x, y) -> np.ndarray:
+        px, py = self.pixel(x, y)
+        h, w = self.rgb.shape[:2]
+        i, j = np.rint(py).astype(int), np.rint(px).astype(int)
+        if (i < 0).any() or (i >= h).any() or (j < 0).any() or (j >= w).any():
+            raise ValueError("画像の外を読もうとした（MARGIN が REACH より小さい？）")
+        return self.rgb[i, j]
+
+
+def raw_edges(line: Refline, mosaic: Mosaic) -> tuple[np.ndarray, np.ndarray]:
+    """基準線の格子の各 `s` での (left_m, right_m)。外れ値を捨てる前の値。"""
+    offs = np.arange(-REACH, REACH + STEP / 2, STEP)
+    rx, ry, nx, ny = frame(line, line.s)
+    road = road_mask(mosaic.sample(rx[:, None] + offs * nx[:, None], ry[:, None] + offs * ny[:, None]))
+    out = np.array([band(r, offs) for r in road])
+    return out[:, 0], out[:, 1]
+
+
+def write_edges(path: Path, s: np.ndarray, left: np.ndarray, right: np.ndarray, note: str) -> None:
+    head = "".join(f"# {t}\n" for t in note.splitlines())
+    body = "s,left_m,right_m\n" + "".join(f"{a:.3f},{b:.2f},{c:.2f}\n" for a, b, c in zip(s, left, right))
+    path.write_text(head + body, encoding="utf-8")
+
+
+def main(argv: list[str]) -> None:
+    if len(argv) != 1:
+        raise SystemExit("usage: python -m ingest.edges <course>")
+    course_dir = TRACK_DIR / argv[0]
+    line = load_refline(course_dir)
+    origin = tomllib.loads((course_dir / "origin.toml").read_text(encoding="utf-8"))
+    mosaic = Mosaic(line, origin["lat"], origin["lon"])
+    left_raw, right_raw = raw_edges(line, mosaic)
+    left, right = clean(left_raw, right_raw)
+    width = left + right
+    raw_ok = np.isfinite(left_raw + right_raw).mean()
+    note = (
+        "コースの端（ingest.edges が書く）。s は基準線（refline.csv）の格子、"
+        "left_m は左の端（左が正）、right_m は右の端（右が正）の基準線からの距離 [m]\n"
+        f"attribution = {ATTRIBUTION}\n"
+        f"attribution_url = {ATTRIBUTION_URL}\n"
+        f"tiles = {TILE_URL.format(z=ZOOM, x='{x}', y='{y}')}、zoom = {ZOOM}、"
+        f"{mosaic.tiles[0]}x{mosaic.tiles[1]} 枚、取得日 {mosaic.fetched[0]}〜{mosaic.fetched[1]}\n"
+        f"路面の画素：明るさ < {LUM_MAX:g}、B - R >= {BLUE_MIN:g}。法線上 ±{REACH:g} m を {STEP:g} m 刻み、"
+        f"始点は基準線から {START_MAX:g} m 以内、{GAP_MAX:g} m 以下の切れ目は越える\n"
+        f"外れ値：幅 {WIDTH_MIN:g}〜{WIDTH_MAX:g} m の外、片側 {SIDE_MIN:g} m 未満を捨てる。"
+        f"前後 {SMOOTH} 点（{SMOOTH * line.length / len(line.s):.0f} m）の中央値で平滑化"
+    )
+    out = course_dir / "edges.csv"
+    write_edges(out, line.s, left, right, note)
+    print(f"{out}: {len(line.s)} 点、幅の中央値 {np.median(width):.1f} m（{width.min():.1f}〜{width.max():.1f}）、"
+          f"写真から幅が取れた点 {raw_ok:.1%}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

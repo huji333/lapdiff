@@ -13,9 +13,11 @@ dependencies = [
 
 [dependency-groups]
 # dev は analysis を含める。グラフとノートブックの通しの実行もテストするため
-dev = ["pytest>=8.0", "ruff>=0.6", { include-group = "analysis" }]
+dev = ["pytest>=8.0", "ruff>=0.6", { include-group = "analysis" }, { include-group = "edges" }]
 # グラフは altair。区間の選択を Vega-Lite の選択で書くと、コース図と距離のグラフの連動がブラウザの中で完結する
 analysis = ["altair>=6.3.0", "marimo>=0.9"]
+# コースの端（ingest.edges）を空中写真から取り出すときだけ使う。JPEG のタイルを読む
+edges = ["pillow>=10"]
 
 [build-system]
 requires = ["hatchling"]

@@ -22,6 +22,7 @@ uv run python -m ingest.acraw <acraw.gz> <outdir>
 # コースごとに一度。基準線を作ってから、AC の座標変換をそれに合わせる
 uv run python -m ingest.track <racechrono csv> <course>          # track/<course>/refline.csv
 uv run python -m ingest.ac_transform <acraw.gz> <course>          # track/<course>/ac_transform.toml
+uv run python -m ingest.edges <course>                            # track/<course>/edges.csv（コースの端。地理院タイルを取得する）
 ```
 
 ## 分析

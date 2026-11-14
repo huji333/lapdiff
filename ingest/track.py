@@ -41,6 +41,21 @@ class Refline:
         return np.c_[self.x, self.y]
 
 
+def frame(line: Refline, s: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """基準線上の距離 `s` の点 (x, y) と、進行方向の左向きの単位法線 (nx, ny)。
+
+    基準線は閉じているので全長を周期として補間する。接線は前後 1 m の点の差。
+    """
+    def at(v: np.ndarray, col: np.ndarray) -> np.ndarray:
+        return np.interp(v % line.length, line.s, col, period=line.length)
+
+    s = np.asarray(s, dtype=np.float64)
+    tx = at(s + 1.0, line.x) - at(s - 1.0, line.x)
+    ty = at(s + 1.0, line.y) - at(s - 1.0, line.y)
+    norm = np.hypot(tx, ty)
+    return at(s, line.x), at(s, line.y), -ty / norm, tx / norm
+
+
 def _arclength(xy: np.ndarray, closed: bool) -> np.ndarray:
     pts = np.r_[xy, xy[:1]] if closed else xy
     return np.r_[0, np.cumsum(np.hypot(*np.diff(pts, axis=0).T))]
