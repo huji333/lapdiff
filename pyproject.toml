@@ -12,18 +12,20 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.6"]
-analysis = ["marimo>=0.9"]
+# dev は analysis を含める。グラフとノートブックの通しの実行もテストするため
+dev = ["pytest>=8.0", "ruff>=0.6", { include-group = "analysis" }]
+# グラフは altair。区間の選択を Vega-Lite の選択で書くと、コース図と距離のグラフの連動がブラウザの中で完結する
+analysis = ["altair>=6.3.0", "marimo>=0.9"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["ingest"]
+packages = ["ingest", "analysis"]
 
 [tool.pytest.ini_options]
-testpaths = ["ingest/tests"]
+testpaths = ["ingest/tests", "analysis/tests"]
 
 [tool.ruff]
 line-length = 100
