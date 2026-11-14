@@ -1,19 +1,19 @@
 // 区間の連動とカーソル。Plot に区間選択はないので、d3-brush を Plot の SVG に重ね、
 // Plot の縮尺（charts.ts の Chart）で画面座標と s を変換する。
 //
-// - 距離のグラフで横にドラッグ：その s の範囲を、コース図では基準線の赤い線で、もう一方の距離のグラフでは帯で示す。
+// - 距離のグラフで横にドラッグ：その s の範囲を、コース図では基準線に沿った線で、ほかの距離のグラフでは帯で示す（SELECT_COLOR）。
 // - コース図で矩形をドラッグ：基準線の点のうち矩形の中にある点の s の最小〜最大を、距離のグラフに帯で示す。
-// - クリック・ダブルクリック・「選択を解除」で解除する。
+// - クリック・ダブルクリック・Esc（main.ts）で解除する。
 // - 距離のグラフの上でカーソルを動かすと、その s に縦線を引き、コース図と G-G 図に各周の位置を点で示す。
 
 import * as d3 from "d3";
-import { HIGHLIGHT, type Chart } from "./charts";
+import { SELECT_COLOR, type Chart } from "./charts";
 import { sRangeInRect, type Lap, type Range, type Refline } from "./data";
 
 /** どのグラフで選んだか。"restored" は描き直しの前の選択で、ドラッグの枠は残っていない。 */
-export type DistanceId = "speed" | "dt" | "ax" | "ay";
+export type DistanceId = "speed" | "dt" | "offset" | "ax" | "pedal";
 /** "panel" は区間ごとの損失のパネル（sections.ts）で区間を押したとき */
-export type Source = DistanceId | "offset" | "pedal" | "map" | "panel" | "restored";
+export type Source = DistanceId | "map" | "panel" | "restored";
 
 export interface Selection {
   source: Source;
@@ -71,7 +71,7 @@ function frame(chart: Chart): [[number, number], [number, number]] {
 }
 
 /** 距離のグラフ（横軸が s）に、横の区間選択とカーソルを付ける。 */
-export function attachDistance(chart: Chart, id: DistanceId | "offset" | "pedal", link: Link): void {
+export function attachDistance(chart: Chart, id: DistanceId, link: Link): void {
   const { x } = chart;
   const [[left, top], [right, bottom]] = frame(chart);
   const svg = d3.select(chart.svg);
@@ -80,7 +80,7 @@ export function attachDistance(chart: Chart, id: DistanceId | "offset" | "pedal"
     .append("rect")
     .attr("y", top)
     .attr("height", bottom - top)
-    .attr("fill", HIGHLIGHT)
+    .attr("fill", SELECT_COLOR)
     .attr("fill-opacity", 0.15)
     .attr("display", "none");
   const rule = layer
@@ -145,7 +145,7 @@ export function attachMap(
   const path = layer
     .append("path")
     .attr("fill", "none")
-    .attr("stroke", HIGHLIGHT)
+    .attr("stroke", SELECT_COLOR)
     .attr("stroke-width", 4)
     .attr("stroke-linecap", "round");
   const dots = layer.append("g");

@@ -23,11 +23,6 @@ body {
   background: #fff;
 }
 
-h1 {
-  font-size: 1.3rem;
-  margin: 0 0 8px;
-}
-
 h2 {
   font-size: 1.1rem;
 }
@@ -52,7 +47,7 @@ h2 {
 }
 
 /* 左：コース図を画面の高さいっぱいに描き、右をスクロールしても見えたままにする。
-   右：速度・Δt は全長。その下に G-G 図（固定）と、一部の距離だけ見せて横にスクロールする前後G・横G */
+   右：速度・Δt（全長）と、その下に G-G 図とカーソルの値 */
 main {
   display: flex;
   gap: 16px;
@@ -109,14 +104,8 @@ main {
   margin: 0;
 }
 
-/* main の中で横に並ぶ要素より前に、ビューの説明を 1 行目に置く */
 main {
   flex-wrap: wrap;
-}
-
-.view-note {
-  flex: 1 0 100%;
-  margin: 0;
 }
 
 .tabs {
@@ -146,34 +135,51 @@ main {
   margin-top: 8px;
 }
 
-.gg-col {
-  flex: 0 0 auto;
+/* コーナーのボタンに添える損失（自己ベストとの差）。min_diff_s 未満は灰色 */
+.corner-bar .loss {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
-.g-scroll {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow-x: auto;
+.corner-bar .loss.small {
+  opacity: 0.55;
 }
 
-.g-scroll > div {
-  width: max-content;
-}
-
-#legend {
+.legend {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 16px;
   font-size: 12px;
 }
 
-#legend span,
 #readout div,
-#laps .lap-label,
-.stats .lap-label {
+.lap-label {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* コース図の左上に重ねる、損失の色の凡例 */
+#map-legend {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+}
+
+.loss-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: rgb(255 255 255 / 0.85);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.loss-legend .ramp {
+  display: inline-block;
+  width: 60px;
+  height: 8px;
 }
 
 #readout {
@@ -200,6 +206,11 @@ main {
 #laps tr.ref,
 .stats tr.ref {
   background: var(--ref-bg);
+}
+
+/* lap_valid でない周 */
+#laps tr.invalid {
+  color: var(--muted);
 }
 
 /* 区間ごとの損失のパネル（sections.ts）。全体のビューの右の列に置き、距離のグラフを隠さない。
@@ -276,11 +287,6 @@ main {
 .sp-summary {
   margin: 0 0 6px;
   font-variant-numeric: tabular-nums;
-}
-
-.sp-note {
-  margin: 6px 0 0;
-  color: var(--muted);
 }
 
 .sp-list {

@@ -1,4 +1,5 @@
-// ビュー 1 のグラフ（Observable Plot）：コース図、距離×速度・タイム差・前後G・横G、G-G 図。
+// ビュー 1 のグラフ（Observable Plot）：コース図、距離のグラフ（速度・タイム差、コーナーのビューの横のずれ・前後G・ペダル）、
+// G-G 図、コーナーの拡大図。
 // グラフは操作のたびに描き直さない。区間の強調とカーソルは brush.ts が SVG に重ねて描く。
 
 import * as Plot from "@observablehq/plot";
@@ -17,8 +18,10 @@ import {
   type Range,
   type Series,
 } from "./data";
+import { lapLabel } from "./dom";
 
-export const HIGHLIGHT = "#d62728";
+/** 選んだ区間の強調の色。損失の赤（sections.ts の LOSS_RAMP）や周の色と紛れない紫にする */
+export const SELECT_COLOR = "#7c3aed";
 const CORNER_GRAY = "#808080";
 const S_TICK = 500;
 const MAP_MARGIN = 12;
@@ -27,6 +30,8 @@ const PLOT_HEIGHT = 240;
 const GG_SIZE = 340;
 /** G-G 図の目安の円 [G] */
 const G_RINGS = [0.5, 1.0, 1.5];
+/** 目安の円のうち、値を書く円 [G]。ほかの円は 0.5 G 刻みと読める */
+const G_RING_LABEL = 1.0;
 
 /** 描いたグラフと、その x・y の縮尺（データ ⇄ SVG 座標）。 */
 export interface Chart {
@@ -190,7 +195,9 @@ export function courseMap(
   style: (lap: Lap) => LapStyle,
   height: number,
   /** 路面をミニセクターごとに塗る色。null なら塗らない */
-  paint: Paint | null = null,
+  paint: Paint | null,
+  /** コーナーの記号の下に周ごとの最低通過速度を出すか（2 周で比べるときだけ） */
+  showVmin: boolean,
 ): Chart {
   const { refline: line } = doc;
   // 損失の色は基準線に沿った太い帯で塗る。1 m 刻みでたどり、両端を共有させてつなぎ目に隙間を作らない
@@ -209,10 +216,10 @@ export function courseMap(
     .filter((c) => c.s_apex != null)
     .map((c) => ({ ...c, ...pointAt(line, c.s_apex!) }));
   // 各コーナーの記号の下に、重ねる周の最低通過速度 [km/h] を周の色で縦に並べる
-  const vmins = apexes.flatMap((c) =>
+  const vmins = (showVmin ? apexes : []).flatMap((c) =>
     laps.flatMap((lap) => {
       const v = lap.corner_stats?.[c.id]?.v_min;
-      return v == null ? [] : [{ x: c.x, y: c.y, v, lap }];
+      return v == null ? [] : [{ x: c.x, y: c.y, v, lap, title: `${c.id} 最低速度 ${v.toFixed(1)} km/h（${lapLabel(lap)}）` }];
     }),
   );
   return asChart(
@@ -226,8 +233,8 @@ export function courseMap(
         ...roadMarks(doc.edges, null),
         // 帯は路面と端の線の上、周の線の下に置く。帯が路面より太いので、端の線は塗った区間で隠れる
         Plot.line(painted, { x: "x", y: "y", z: "i", stroke: "color", strokeWidth: PAINT_BAND_WIDTH }),
-        // 基準線は実車の周の平均で、コースの中心ではない。路面と紛れないよう細い線にする
-        Plot.line(line.x, { x: Plot.identity, y: line.y, stroke: REFLINE_STROKE, strokeWidth: 1 }),
+        // 基準線は実車の周の平均で、コースの中心ではない。コースの端があれば路面で形が分かるので描かない
+        doc.edges ? null : Plot.line(line.x, { x: Plot.identity, y: line.y, stroke: REFLINE_STROKE, strokeWidth: 1 }),
         // 損失の色で塗ったときは、周の線に白い縁取りを付けて赤い帯から浮かせる
         ...laps.flatMap((lap) => {
           const st = style(lap);
@@ -236,7 +243,7 @@ export function courseMap(
             : [];
           return [...casing, Plot.line(lap.x, { x: Plot.identity, y: lap.y, ...st })];
         }),
-        Plot.dot(ticks, { x: "x", y: "y", symbol: "plus", stroke: "black", r: 4 }),
+        Plot.dot(ticks, { x: "x", y: "y", fill: "black", r: 2 }),
         Plot.text(ticks, { x: "x", y: "y", text: (d) => `${d.s}`, dx: 6, dy: -8, textAnchor: "start" }),
         Plot.text(apexes, {
           x: "x",
@@ -260,6 +267,7 @@ export function courseMap(
               text: (d) => d.v.toFixed(0),
               dx: 12,
               dy: 22 + 11 * i,
+              title: "title",
               fontSize: 10,
               fontWeight: "bold",
               textAnchor: "start",
@@ -362,11 +370,11 @@ export function ggChart(laps: Lap[], style: (lap: Lap) => LapStyle, range: Range
       marginRight: 16,
       marginTop: 16,
       marginBottom: 36,
-      x: { domain: [-d, d], reverse: true, label: "← 左旋回　横G ay [G]　右旋回 →", labelAnchor: "center", grid: true },
-      y: { domain: [-d, d], label: "前後G ax [G]", grid: true },
+      x: { domain: [-d, d], reverse: true, label: "← 左旋回　横G [G]　右旋回 →", labelAnchor: "center", grid: true },
+      y: { domain: [-d, d], label: "前後G [G]", grid: true },
       marks: [
         Plot.line(rings, { x: "x", y: "y", z: "r", stroke: "#999", strokeDasharray: "2,3" }),
-        Plot.text(G_RINGS.filter((r) => r <= d), { x: 0, y: (r) => r, text: (r) => `${r} G`, dy: -6, fill: "#999", fontSize: 10 }),
+        Plot.text([G_RING_LABEL].filter((r) => r <= d), { x: 0, y: (r) => r, text: (r) => `${r} G`, dy: -6, fill: "#999", fontSize: 10 }),
         Plot.ruleX([0], { stroke: "#bbb" }),
         Plot.ruleY([0], { stroke: "#bbb" }),
         ...laps.map((lap) => lines(lap, null, range ? 0.12 : 0.45)),
@@ -492,20 +500,18 @@ export function cornerMap(
   }
   const margin = 16;
   const dom = fitDomains(d3.extent(xs) as Range, d3.extent(ys) as Range, width, height, margin);
-  const ends = [
-    { label: "始点", ...pointAt(line, corner.s_start) },
-    { label: "終点", ...pointAt(line, corner.s_end) },
-  ];
+  const ends = [pointAt(line, corner.s_start), pointAt(line, corner.s_end)];
   const brakes = laps.flatMap((l) => {
     const s = l.corner_stats?.[corner.id]?.s_brake;
     if (s == null || l.x[s] == null || l.y[s] == null) return [];
-    return [{ lap: l, x: l.x[s]!, y: l.y[s]!, bearing: bearingAt(line, s) }];
+    return [{ lap: l, x: l.x[s]!, y: l.y[s]!, bearing: bearingAt(line, s), title: `ブレーキ開始 s = ${s} m（${lapLabel(l)}）` }];
   });
   const bottoms = laps.flatMap((l) => {
     const st = l.corner_stats?.[corner.id];
     const s = st?.s_vmin;
     if (s == null || l.x[s] == null || l.y[s] == null) return [];
-    return [{ lap: l, x: l.x[s]!, y: l.y[s]!, v: st!.v_min!, color: style(l).stroke }];
+    const v = st!.v_min!;
+    return [{ lap: l, x: l.x[s]!, y: l.y[s]!, v, color: style(l).stroke, title: `ボトム ${v.toFixed(1)} km/h、s = ${s} m（${lapLabel(l)}）` }];
   });
   // 走る向き：区間の始点の少し手前から始点への矢印
   const a = pointAt(line, Math.max(win[0], corner.s_start - 15));
@@ -529,8 +535,8 @@ export function cornerMap(
           stroke: "#999",
           strokeWidth: 2,
         }),
+        // 区間の始点と終点。どちらが始点かは進む向きの矢印で読む
         Plot.dot(ends, { x: "x", y: "y", r: 5, fill: CORNER_GRAY }),
-        Plot.text(ends, { x: "x", y: "y", text: "label", dx: 10, textAnchor: "start", fill: CORNER_GRAY, fontSize: 11 }),
         // 周の線は白い縁取りの上に描く。重なっても、どちらが内側かを線の境目で読めるようにする。
         // 基準ラップとの太さの差は小さくし、太い線に細い線のずれが埋もれないようにする
         ...laps.flatMap((l) => {
@@ -551,8 +557,9 @@ export function cornerMap(
           rotate: "bearing",
           fill: (d) => style(d.lap).stroke,
           stroke: "white",
+          title: "title",
         }),
-        Plot.dot(bottoms, { x: "x", y: "y", r: 4, fill: (d) => style(d.lap).stroke, stroke: "white" }),
+        Plot.dot(bottoms, { x: "x", y: "y", r: 4, fill: (d) => style(d.lap).stroke, stroke: "white", title: "title" }),
         vminLabels(bottoms),
       ],
     }),

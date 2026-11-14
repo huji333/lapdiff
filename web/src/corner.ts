@@ -10,23 +10,16 @@
 // - 距離×前後G：ブレーキ開始点のしきい値（brake_g）を破線で引く。各周のブレーキ開始点は、どの距離のグラフにも周の色の縦の破線で示す。
 // - 距離×ペダル：アクセルを上、ブレーキを下に [%]。ペダルを記録している周（AC）だけ描く。
 //   実車の前後G から決めたブレーキ開始点と、シムの実際の踏み始めを同じ s で比べられる。
-// - 表：区間タイム（section_times の値。基準ラップとの差）、始点・ボトム・終点の速度、ボトムの位置、ブレーキ開始点、最大減速度。
-//   値は analysis.export が出す。
+// - 表：区間タイム（section_times の値）、ブレーキ開始点、最大減速度、始点・ボトム・終点の速度。
+//   基準の行は値、ほかの行は基準との差（derive が求める）。値は analysis.export が出す。
 // - 距離のグラフにカーソルを置くと、拡大図と G-G 図にその s の各周の点を打つ。
 
 import * as Plot from "@observablehq/plot";
 import { attachDistance, drawDots, gAt, Link, xyAt } from "./brush";
 import { cornerMap, distanceChart, gDomain, ggChart, type Chart, type LapStyle } from "./charts";
-import {
-  cornerWindow,
-  hasPedals,
-  pedalSeries,
-  sectionTime,
-  type Corner,
-  type CourseData,
-  type Lap,
-  type Range,
-} from "./data";
+import { cornerWindow, hasPedals, pedalSeries, type Corner, type CourseData, type Lap, type Range } from "./data";
+import type { CornerRow, CornerTable, DiffKey } from "./derive";
+import { fmt, lapName, message, PICK_LAPS, setHead, type Head } from "./dom";
 
 /** コーナーの区間の前後に足して描く距離 [m] */
 const PAD = 80;
@@ -44,20 +37,13 @@ export interface CornerEls {
   table: HTMLTableElement;
 }
 
-function fmt(v: number | null | undefined, digits: number, sign = false): string {
-  if (v == null) return "N/A";
-  const s = v.toFixed(digits);
-  return sign && v > 0 ? `+${s}` : s;
-}
-
 export function renderCorner(
   els: CornerEls,
   doc: CourseData,
   corner: Corner,
   laps: Lap[],
-  ref: Lap | null,
+  table: CornerTable,
   style: (lap: Lap) => LapStyle,
-  swatch: (style: LapStyle) => SVGSVGElement,
   link: Link,
   mapWidth: number,
   mapHeight: number,
@@ -69,13 +55,13 @@ export function renderCorner(
   // ブレーキ開始点が区間の手前 PAD m より前にある周もあるので、そこまで広げる
   const base = cornerWindow(corner, doc.grid_max, PAD);
   const win: Range = [Math.max(0, Math.min(base[0], ...brakes.map((b) => b.s - 20))), base[1]];
-  els.title.textContent =
-    `${corner.id} ${corner.name}　区間 s = ${corner.s_start}〜${corner.s_end} m（前後 ${PAD} m を含めて描く）`;
+  els.title.textContent = `${corner.id} ${corner.name}`;
+  els.title.title = `区間 s = ${corner.s_start}〜${corner.s_end} m`;
 
   link.reset();
   if (laps.length === 0) {
     for (const e of [els.map, els.offset, els.speed, els.ax, els.pedal, els.gg]) e.replaceChildren();
-    els.map.textContent = "重ねる周を一覧で選ぶ";
+    message(els.map, PICK_LAPS);
     els.table.replaceChildren();
     return;
   }
@@ -105,10 +91,7 @@ export function renderCorner(
     {
       ...opts,
       zero: true,
-      yLabel:
-        side == null
-          ? "横のずれ [m]（基準線から左が正）"
-          : `横のずれ [m]（${corner.id} の内側＝${side === "left" ? "左" : "右"}が正）`,
+      yLabel: `横のずれ [m]（実車平均線から、↑ ${side == null ? "左" : `${corner.id} のイン`}）`,
     },
   );
   els.offset.replaceChildren(offset.svg);
@@ -122,7 +105,7 @@ export function renderCorner(
   const ax = distanceChart(doc, laps.map((lap) => ({ lap, values: lap.ax })), style, {
     ...opts,
     zero: true,
-    yLabel: `前後G ax [G]（破線は -${doc.brake_g} G）`,
+    yLabel: `前後G [G]（破線 −${doc.brake_g} G を下回る点＝ブレーキ開始）`,
     extra: [...brakeRules, Plot.ruleY([-doc.brake_g], { stroke: "#999", strokeDasharray: "2,3" })],
   });
   els.ax.replaceChildren(ax.svg);
@@ -130,10 +113,7 @@ export function renderCorner(
 
   const pedalLaps = laps.filter(hasPedals);
   if (pedalLaps.length === 0) {
-    const p = document.createElement("p");
-    p.className = "message";
-    p.textContent = "ペダルのグラフは、ペダルを記録している周（AC）を重ねると出る";
-    els.pedal.replaceChildren(p);
+    message(els.pedal, "ペダル：AC の周のみ");
   } else {
     const series = pedalLaps.flatMap((lap) => {
       const { throttle, brake } = pedalSeries(lap, win);
@@ -168,62 +148,60 @@ export function renderCorner(
     },
   });
 
-  renderTable(els.table, doc, laps, ref, corner, style, swatch);
+  renderTable(els.table, doc, laps, table, style);
 }
+
+/** 表の列。基準の行は値、ほかの行は基準との差（基準にその値がある列だけ） */
+const COLS: { key: DiffKey; text: string; digits: number; sign: string }[] = [
+  { key: "t", text: "区間タイム [s]", digits: 3, sign: "+ が遅い" },
+  { key: "s_brake", text: "ブレーキ [m]", digits: 0, sign: "+ が奥" },
+  { key: "ax_min", text: "最大減速度 [G]", digits: 2, sign: "− が強い" },
+  { key: "v_entry", text: "始点 [km/h]", digits: 1, sign: "+ が速い" },
+  { key: "v_min", text: "ボトム [km/h]", digits: 1, sign: "+ が速い" },
+  { key: "v_exit", text: "終点 [km/h]", digits: 1, sign: "+ が速い" },
+];
 
 function renderTable(
   table: HTMLTableElement,
   doc: CourseData,
   laps: Lap[],
-  ref: Lap | null,
-  corner: Corner,
+  { ref, rows }: CornerTable,
   style: (lap: Lap) => LapStyle,
-  swatch: (style: LapStyle) => SVGSVGElement,
 ): void {
-  const refT = ref ? sectionTime(doc, ref, corner.id) : null;
-  const head = table.createTHead();
-  head.replaceChildren();
-  const hr = head.insertRow();
-  const cols = [
-    "周",
-    "区間タイム [s]",
-    "基準との差 [s]",
-    "ブレーキ開始の s [m]",
-    "最大減速度 [G]",
-    "始点 [km/h]",
-    "ボトム [km/h]",
-    "ボトムの s [m]",
-    "終点 [km/h]",
-  ];
-  for (const h of cols) {
-    const th = document.createElement("th");
-    th.textContent = h;
-    hr.append(th);
-  }
+  const diffCol = (key: DiffKey) => ref?.[key] != null;
+  // 実車の周を重ねているときは、ブレーキ開始点がしきい値に敏感なことを見出しに出す
+  const real = laps.some((l) => l.source === "racechrono");
+  const brakeDef =
+    `前後G が −${doc.brake_g} G を下回り始めた点（ペダルではない）。` +
+    (real ? `実車はしきい値を 0.1 G 変えると 30 m 以上動くコーナーがある。` : "");
+  const heads: Head[] = COLS.map(({ key, text, sign }) => {
+    const diff = diffCol(key);
+    const h: Head = {
+      text: key === "t" && diff ? "基準との差 [s]" : key === "s_brake" && real ? "ブレーキ~ [m]" : text,
+    };
+    const titles = [key === "s_brake" ? brakeDef : "", diff ? `基準の行は値、ほかは基準との差（${sign}）` : ""];
+    if (titles.some(Boolean)) h.title = titles.join("");
+    return h;
+  });
+  setHead(table, ["周", ...heads]);
   const body = table.tBodies[0] ?? table.createTBody();
   body.replaceChildren();
-  for (const lap of laps) {
-    const st = lap.corner_stats?.[corner.id];
-    const t = sectionTime(doc, lap, corner.id);
+  for (const row of rows) {
     const tr = body.insertRow();
-    if (lap === ref) tr.className = "ref";
-    const name = document.createElement("span");
-    name.className = "lap-label";
-    name.append(swatch(style(lap)), lap.label);
-    tr.insertCell().append(name);
-    const diff = t != null && refT != null ? t - refT : null;
-    for (const c of [
-      fmt(t, 3),
-      fmt(diff, 3, true),
-      // ax_min があって s_brake がないのは、しきい値を下回らなかった周
-      st?.s_brake != null ? String(st.s_brake) : st?.ax_min != null ? "なし" : "N/A",
-      fmt(st?.ax_min, 2),
-      fmt(st?.v_entry, 1),
-      fmt(st?.v_min, 1),
-      st?.s_vmin == null ? "N/A" : String(st.s_vmin),
-      fmt(st?.v_exit, 1),
-    ]) {
-      tr.insertCell().textContent = c;
+    if (row.diff == null && ref != null) tr.className = "ref";
+    tr.insertCell().append(lapName(row.lap, style(row.lap)));
+    for (const col of COLS) {
+      const td = tr.insertCell();
+      td.textContent = cell(row, col.key, col.digits, diffCol(col.key));
+      if (col.key === "t" && diffCol("t") && row.diff) td.title = `区間タイム ${fmt(row.values.t, 3)} s`;
+      if (col.key === "v_min" && row.values.s_vmin != null) td.title = `s = ${row.values.s_vmin} m`;
     }
   }
+}
+
+function cell(row: CornerRow, key: DiffKey, digits: number, diffCol: boolean): string {
+  const { values, diff } = row;
+  // ax_min があって s_brake がないのは、しきい値を下回らなかった周
+  if (key === "s_brake" && values.s_brake == null) return values.ax_min != null ? "なし" : "N/A";
+  return diff && diffCol ? fmt(diff[key], digits, true) : fmt(values[key], digits);
 }

@@ -1,35 +1,14 @@
-// ビュー 1 の画面：操作欄、周の一覧、グラフ。状態が変わるたびに全体を描き直す。
+// ビュー 1 の画面：状態と配線。状態（derive.ts の State）が操作欄の値の唯一の正で、変えるのは update だけ。
+// 描くときは derive で状態から値を求め、操作欄（renderToolbar）とグラフ（renderCharts）を描く。どちらも状態を変えない。
 
 import "./style.css";
-import { attachDistance, attachMap, drawDots, gAt, Link, type DistanceId } from "./brush";
+import { attachDistance, attachMap, drawDots, gAt, Link } from "./brush";
 import { renderCorner } from "./corner";
-import { hasOtherBest, lossColor, miniLosses, renderPanel, sectionLosses, setupPanel } from "./sections";
-import {
-  courseMap,
-  distanceChart,
-  gDomain,
-  ggChart,
-  lapColors,
-  lapStyle,
-  PAIR_COLORS,
-  type Chart,
-  type LapStyle,
-  type Paint,
-} from "./charts";
-import {
-  cornersOf,
-  defaultComparison,
-  defaultSelection,
-  finalDelta,
-  loadCourse,
-  loadIndex,
-  refCandidates,
-  shownLaps,
-  timeDelta,
-  type CourseData,
-  type Lap,
-  type Series,
-} from "./data";
+import { lossColor, lossLegend, miniLosses, renderPanel, setupPanel } from "./sections";
+import { courseMap, distanceChart, gDomain, ggChart, type Chart, type LapStyle, type Paint } from "./charts";
+import { cornersOf, finalDelta, loadCourse, loadIndex, type CourseData, type Lap, type Series } from "./data";
+import { cornerLoss, derive, initialState, normalize, type Derived, type State } from "./derive";
+import { FRAGMENT, fmt, lapLabel, lapName, message, PICK_LAPS, setHead, swatch } from "./dom";
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -39,27 +18,26 @@ function el<T extends HTMLElement>(id: string): T {
 
 const ui = {
   course: el<HTMLSelectElement>("course"),
+  courseLabel: el<HTMLLabelElement>("course-label"),
   showInvalid: el<HTMLInputElement>("show-invalid"),
   ref: el<HTMLSelectElement>("ref"),
   cmp: el<HTMLSelectElement>("cmp"),
   cmpLabel: el<HTMLLabelElement>("cmp-label"),
   multi: el<HTMLInputElement>("multi"),
-  clear: el<HTMLButtonElement>("clear"),
   error: el<HTMLDivElement>("error"),
   attribution: el<HTMLParagraphElement>("attribution"),
   map: el<HTMLDivElement>("map"),
+  mapLegend: el<HTMLDivElement>("map-legend"),
   readout: el<HTMLDivElement>("readout"),
   legend: el<HTMLDivElement>("legend"),
   speed: el<HTMLDivElement>("speed"),
   dt: el<HTMLDivElement>("dt"),
-  ax: el<HTMLDivElement>("ax"),
-  ay: el<HTMLDivElement>("ay"),
   gg: el<HTMLDivElement>("gg"),
-  gScroll: el<HTMLDivElement>("g-scroll"),
   tabs: [...document.querySelectorAll<HTMLAnchorElement>(".tabs a")],
   cornerBar: el<HTMLDivElement>("corner-bar"),
   viewOverview: el<HTMLElement>("view-overview"),
   viewCorner: el<HTMLElement>("view-corner"),
+  cornerLegend: el<HTMLDivElement>("c-legend"),
   corner: {
     title: el<HTMLElement>("c-title"),
     map: el<HTMLDivElement>("c-map"),
@@ -79,38 +57,35 @@ const ui = {
   },
 };
 
-interface State {
-  doc: CourseData;
-  colors: Map<string, string>;
-  showInvalid: boolean;
-  selected: Set<string>;
-  /** false なら基準と比較の 2 周だけ描く（既定）。true なら一覧のチェックで選んだ周を重ねる */
-  multi: boolean;
-  /** 2 周で比べるときの比較の周 */
-  cmp: string | null;
-  ref: string | null;
-  view: "overview" | "corner";
-  /** 選んだコーナーの id。コーナーのビューで拡大するコーナー */
-  corner: string | null;
-}
-
-/** 前後G・横G の距離のグラフの高さ [px] と、横の縮尺 [px/m]。全長を描き、一部だけ見せて横にスクロールさせる */
-const G_HEIGHT = 170;
-const G_PX_PER_M = 0.75;
 /** コース図の高さの下限 [px]。これより低い画面ではページごとスクロールする */
 const MAP_MIN_HEIGHT = 500;
 /** コーナーの拡大図の幅の下限 [px] */
 const CORNER_MAP_MIN_WIDTH = 320;
 
+let courses: string[] = [];
+let doc: CourseData | null = null;
 let state: State | null = null;
 const link = new Link();
 // コーナーのビューのグラフどうしの連動。全体のビューの選択とは分ける
 const cornerLink = new Link();
 
-/** 操作から呼ぶ描き直し。失敗は画面に出し、成功したら前の失敗の表示を消す。 */
-function rerender(): void {
+/**
+ * 状態を変える唯一の入口。基準と比較の周を候補に戻して（normalize）から描き直す。
+ */
+function update(patch: Partial<State>): void {
+  if (!state || !doc) return;
+  const next = { ...state, ...patch };
+  state = { ...next, ...normalize(next, doc) };
+  rerender();
+}
+
+/** 描き直し。`toolbar` が false なら操作欄はそのままで、グラフだけ描く（画面の大きさが変わったとき）。 */
+function rerender(toolbar = true): void {
+  if (!state || !doc) return;
   try {
-    render();
+    const d = derive(state, doc);
+    if (toolbar) renderToolbar(state, doc, d);
+    renderCharts(state, doc, d);
     clearError();
   } catch (e) {
     showError(e);
@@ -128,53 +103,19 @@ function showError(e: unknown): void {
   ui.error.textContent = e instanceof Error ? e.message : String(e);
 }
 
-function fmt(v: number | null | undefined, digits: number, sign = false): string {
-  if (v == null) return "N/A";
-  const s = v.toFixed(digits);
-  return sign && v > 0 ? `+${s}` : s;
-}
-
-function message(target: HTMLElement, text: string): void {
-  const p = document.createElement("p");
-  p.className = "message";
-  p.textContent = text;
-  target.replaceChildren(p);
-}
-
-function swatch(style: LapStyle): SVGSVGElement {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("width", "28");
-  svg.setAttribute("height", "10");
-  const line = document.createElementNS(ns, "line");
-  for (const [k, v] of Object.entries({ x1: 1, x2: 27, y1: 5, y2: 5 })) line.setAttribute(k, String(v));
-  line.setAttribute("stroke", style.stroke);
-  line.setAttribute("stroke-width", String(style.strokeWidth + 0.8));
-  if (style.strokeDasharray) line.setAttribute("stroke-dasharray", style.strokeDasharray);
-  svg.append(line);
-  return svg;
-}
-
 function hasValues(series: { values: Series }[]): boolean {
   return series.some(({ values }) => values.some((v) => v != null));
 }
 
 async function openCourse(course: string): Promise<void> {
-  const doc = await loadCourse(course);
-  state = {
-    doc,
-    colors: lapColors(doc.laps),
-    showInvalid: ui.showInvalid.checked,
-    selected: defaultSelection(doc.laps),
-    multi: ui.multi.checked,
-    cmp: null,
-    ref: doc.default_ref,
-    ...route(doc),
-  };
-  renderAttribution(doc);
+  const next = await loadCourse(course);
+  // 表示の切り替えは前のコースから引き継ぐ。コーナーは新しいコースで決め直す
+  const keep = { showInvalid: state?.showInvalid ?? false, multi: state?.multi ?? false };
+  doc = next;
+  state = initialState(next, { ...keep, ...route(next, null) });
+  renderAttribution(next);
   link.select(null);
-  render();
-  clearError();
+  rerender();
 }
 
 /** 出典の表記（コースの端を空中写真から作ったとき）。表記は edges.csv の頭の行を書き出しがそのまま渡す */
@@ -189,56 +130,22 @@ function renderAttribution(doc: CourseData): void {
   ui.attribution.replaceChildren("コースの端：", a);
 }
 
-function render(): void {
-  if (!state) return;
-  const { doc, colors, showInvalid, selected } = state;
-
-  // 基準ラップ：一覧に出す周のうち complete の周から選ぶ。選んでいた周が候補から外れたら既定に戻す。
-  // 「（選ぶ）」で外した（null の）ときは既定に戻さない
-  const candidates = refCandidates(doc.laps, showInvalid);
-  const has = (label: string | null) => candidates.some((l) => l.label === label);
-  if (state.ref != null && !has(state.ref)) state.ref = has(doc.default_ref) ? doc.default_ref : null;
-  const ref = doc.laps.find((l) => l.label === state!.ref) ?? null;
+/** 操作欄（select、チェックボックス、タブ、コーナーのボタン、周の一覧）を state から書く */
+function renderToolbar(state: State, doc: CourseData, d: Derived): void {
+  ui.course.value = doc.course;
+  ui.courseLabel.hidden = courses.length <= 1;
   ui.ref.replaceChildren(
-    new Option("（選ぶ）", "", false, ref == null),
-    ...candidates.map((l) => new Option(l.label, l.label, false, l === ref)),
+    new Option("（選ぶ）", "", false, d.ref == null),
+    ...d.refCandidates.map((l) => new Option(lapLabel(l), l.label, false, l === d.ref)),
   );
-
-  const shown = shownLaps(doc.laps, showInvalid);
-  // 比較の周：一覧に出す周のうち基準以外。選んでいた周が候補から外れたら既定に戻す
-  const cmpCandidates = shown.filter((l) => l !== ref);
-  if (!cmpCandidates.some((l) => l.label === state!.cmp)) {
-    state.cmp = defaultComparison(cmpCandidates, ref)?.label ?? null;
-  }
-  const cmp = cmpCandidates.find((l) => l.label === state!.cmp) ?? null;
   ui.cmp.replaceChildren(
-    new Option("（なし）", "", false, cmp == null),
-    ...cmpCandidates.map((l) => new Option(l.label, l.label, false, l === cmp)),
+    new Option("（なし）", "", false, d.cmp == null),
+    ...d.cmpCandidates.map((l) => new Option(lapLabel(l), l.label, false, l === d.cmp)),
   );
   ui.cmpLabel.hidden = state.multi;
+  ui.multi.checked = state.multi;
+  ui.showInvalid.checked = state.showInvalid;
 
-  const overlaid = state.multi
-    ? shown.filter((l) => selected.has(l.label))
-    : [ref, cmp].filter((l): l is Lap => l != null);
-  const lineColors = state.multi
-    ? colors
-    : new Map<string, string>([
-        ...(ref ? [[ref.label, PAIR_COLORS.ref] as const] : []),
-        ...(cmp ? [[cmp.label, PAIR_COLORS.cmp] as const] : []),
-      ]);
-  const style = (lap: Lap) => lapStyle(lap, lineColors, ref?.label ?? null);
-  const dts = new Map<string, Series>(ref ? shown.map((l) => [l.label, timeDelta(l, ref)]) : []);
-
-  renderTable(shown, style, dts);
-  ui.legend.replaceChildren(
-    ...overlaid.map((l) => {
-      const item = document.createElement("span");
-      item.append(swatch(style(l)), l.label);
-      return item;
-    }),
-  );
-
-  renderCornerBar(doc);
   ui.viewOverview.hidden = state.view !== "overview";
   ui.viewCorner.hidden = state.view !== "corner";
   for (const a of ui.tabs) {
@@ -247,6 +154,17 @@ function render(): void {
     // コーナーのタブは、今選んでいるコーナーを開く
     if (a.dataset.view === "corner" && state.corner) a.href = `#corner/${state.corner}`;
   }
+  renderCornerBar(state, doc, d);
+  renderTable(state, d);
+}
+
+/** 重ねる周の凡例（線の見本と周の名前）。全体とコーナーの両方のビューで使う */
+function renderLegend(target: HTMLElement, d: Derived): void {
+  target.replaceChildren(...d.overlaid.map((l) => lapName(l, d.style(l))));
+}
+
+function renderCharts(state: State, doc: CourseData, d: Derived): void {
+  const { overlaid, style } = d;
   // 図を画面の高さに合わせる。見出しや操作の下から始まるので、その分を引き、開いた時点で図の全体が見えるようにする
   const mapHost = state.view === "corner" ? ui.corner.map : ui.map;
   const mapTop = mapHost.getBoundingClientRect().top + window.scrollY;
@@ -255,92 +173,69 @@ function render(): void {
   if (state.view === "corner") {
     ui.panel.root.hidden = true;
     link.reset();
-    const corner = cornersOf(doc).find((c) => c.id === state!.corner);
-    if (!corner) {
+    const corner = cornersOf(doc).find((c) => c.id === state.corner);
+    if (!corner || !d.corner) {
       message(ui.corner.map, "このコースには corners.toml がないので、コーナーのビューは出せない");
       return;
     }
+    renderLegend(ui.cornerLegend, d);
     // 拡大図の幅は列の幅に合わせる。列の幅は CSS の flex で決まり、中の図の幅には引きずられない
     const mapWidth = Math.max(CORNER_MAP_MIN_WIDTH, ui.corner.map.clientWidth);
-    renderCorner(ui.corner, doc, corner, overlaid, ref, style, swatch, cornerLink, mapWidth, mapHeight);
+    renderCorner(ui.corner, doc, corner, overlaid, d.corner, style, cornerLink, mapWidth, mapHeight);
     return;
   }
 
   link.reset();
-  // 区間ごとの損失：2 周で比べるときの比較の周について出す。複数の周を重ねるときは出さない
-  const losses = !state.multi && cmp ? sectionLosses(doc, cmp) : null;
+  if (overlaid.length === 0) message(ui.legend, PICK_LAPS);
+  else renderLegend(ui.legend, d);
+  const { losses } = d;
   ui.panel.root.hidden = losses == null;
   let paint: Paint | null = null;
+  ui.mapLegend.replaceChildren();
   // 自己ベストを決める周がほかにない（損失がすべて 0）ときは塗らない
-  if (losses && cmp && hasOtherBest(doc, cmp)) {
-    const mini = miniLosses(doc, cmp);
-    const color = lossColor(Math.max(0.1, ...mini.loss.map((v) => v ?? 0)));
+  if (losses?.comparable) {
+    const mini = miniLosses(doc, losses.lap);
+    const max = Math.max(0.1, ...mini.loss.map((v) => v ?? 0));
+    const color = lossColor(max);
     paint = { bounds: mini.bounds, color: mini.loss.map(color) };
+    ui.mapLegend.replaceChildren(lossLegend(max));
   }
-  const map = courseMap(doc, overlaid, style, mapHeight, paint);
+  const map = courseMap(doc, overlaid, style, mapHeight, paint, !state.multi);
   ui.map.replaceChildren(map.svg);
   attachMap(map, doc.refline, overlaid, (l) => style(l).stroke, link);
 
-  const plain = (id: DistanceId, target: HTMLElement, values: (lap: Lap) => Series, yLabel: string, g: boolean) => {
-    const series = overlaid.map((lap) => ({ lap, values: values(lap) }));
-    if (!hasValues(series)) {
-      message(target, "重ねる周を一覧で選ぶ");
-      return null;
-    }
-    const chart = distanceChart(doc, series, style, {
-      yLabel,
-      zero: g,
-      labelCorners: id === "speed" || id === "ax",
-      height: g ? G_HEIGHT : undefined,
-      width: g ? Math.round(doc.grid_max * G_PX_PER_M) + 70 : undefined,
-    });
-    target.replaceChildren(chart.svg);
-    attachDistance(chart, id, link);
-    return chart;
-  };
-  plain("speed", ui.speed, (l) => l.speed_kmh, "速度 [km/h]", false);
-  const axChart = plain("ax", ui.ax, (l) => l.ax, "前後G ax [G]（加速が正）", true);
-  plain("ay", ui.ay, (l) => l.ay, "横G ay [G]（左旋回が正）", true);
-
-  const dtSeries = overlaid.map((lap) => ({ lap, values: dts.get(lap.label) ?? [] }));
-  if (!ref) {
-    message(
-      ui.dt,
-      has(doc.default_ref) ? "基準ラップを選ぶ" : "基準ラップを選ぶ（実車の有効で欠けのない周がないため、既定値がない）",
-    );
-  } else if (overlaid.length === 0) {
-    message(ui.dt, "重ねる周を一覧で選ぶ");
-  } else if (!hasValues(dtSeries)) {
-    message(ui.dt, "重ねている周に complete の周がないため、Δt を出せない");
+  const speed = overlaid.map((lap) => ({ lap, values: lap.speed_kmh }));
+  if (hasValues(speed)) {
+    const chart = distanceChart(doc, speed, style, { yLabel: "速度 [km/h]", zero: false, labelCorners: true });
+    ui.speed.replaceChildren(chart.svg);
+    attachDistance(chart, "speed", link);
   } else {
-    const label = `Δt [s]（基準：${ref.label}）`;
-    const chart = distanceChart(doc, dtSeries, style, { yLabel: label, zero: true, labelCorners: false });
+    ui.speed.replaceChildren();
+  }
+
+  const dtSeries = overlaid.map((lap) => ({ lap, values: d.dts.get(lap.label) ?? [] }));
+  if (!d.ref) {
+    message(ui.dt, "基準ラップを選ぶ", d.hasDefaultRef ? undefined : "実車の有効で欠けのない周がないため、既定値がない");
+  } else if (overlaid.length === 0) {
+    ui.dt.replaceChildren();
+  } else if (!hasValues(dtSeries)) {
+    message(ui.dt, `Δt なし（重ねた周がすべて${FRAGMENT}）`);
+  } else {
+    const chart = distanceChart(doc, dtSeries, style, { yLabel: "Δt [s]（+ = 遅い）", zero: true, labelCorners: false });
     ui.dt.replaceChildren(chart.svg);
     attachDistance(chart, "dt", link);
   }
 
-  // ほかのグラフで区間を選んだら、G のグラフをその区間が真ん中に来るまで横に送る
-  if (axChart) {
-    link.add({
-      onSelect: (sel) => {
-        if (!sel || sel.source === "ax" || sel.source === "ay" || sel.source === "restored") return;
-        const mid = axChart.x.apply((sel.range[0] + sel.range[1]) / 2);
-        ui.gScroll.scrollTo({ left: mid - ui.gScroll.clientWidth / 2, behavior: "smooth" });
-      },
-      onHover: () => {},
-    });
-  }
-
   // G-G 図は選んだ区間の軌跡を濃く描くので、選択が変わるたびに描き直す。軸の範囲は周全体から決めて変えない
   if (overlaid.length === 0) {
-    message(ui.gg, "重ねる周を一覧で選ぶ");
+    ui.gg.replaceChildren();
   } else {
-    const d = gDomain(overlaid);
+    const dom = gDomain(overlaid);
     let gg: Chart | null = null;
     let hovered: number | null = null;
     link.add({
       onSelect: (sel) => {
-        gg = ggChart(overlaid, style, sel?.range ?? null, d);
+        gg = ggChart(overlaid, style, sel?.range ?? null, dom);
         ui.gg.replaceChildren(gg.svg);
         drawDots(gg, overlaid, (l) => style(l).stroke, hovered, gAt);
       },
@@ -353,32 +248,45 @@ function render(): void {
 
   link.add({
     onSelect: () => {},
-    onHover: (s) => renderReadout(s, overlaid, style, dts),
+    onHover: (s) => renderReadout(s, overlaid, style, d.dts),
   });
-  if (losses && cmp) renderPanel(ui.panel.body, ui.panel.title, doc, cmp, losses, link);
+  if (losses) renderPanel(ui.panel.body, ui.panel.title, doc, losses, link);
 }
 
 /**
  * URL の hash から、どのビューのどのコーナーを出すか決める。`#overview`、`#corner`、`#corner/T3`。
  * ビューごとに URL を分け、ブラウザのタブを分けて開いたり、読み込み直しても同じビューに戻れるようにする。
- * 知らない hash や、そのコースにないコーナーは、全体のビューと最初のコーナーにする。
+ * 知らない hash や、そのコースにないコーナーは、全体のビューと `prev`（なければ最初のコーナー）にする。
  */
-function route(doc: CourseData): Pick<State, "view" | "corner"> {
+function route(doc: CourseData, prev: string | null): Pick<State, "view" | "corner"> {
   const [view, id] = window.location.hash.replace(/^#/, "").split("/");
   const corners = cornersOf(doc);
-  const corner = corners.find((c) => c.id === id)?.id ?? state?.corner ?? corners[0]?.id ?? null;
+  const known = (c: string | null | undefined) => corners.find((k) => k.id === c)?.id;
+  const corner = known(id) ?? known(prev) ?? corners[0]?.id ?? null;
   return { view: view === "corner" ? "corner" : "overview", corner };
 }
 
-/** コーナーの記号のボタン（コーナーのビューだけ）。押すとそのコーナーの URL に移る。 */
-function renderCornerBar(doc: CourseData): void {
+/**
+ * コーナーの記号のボタン（コーナーのビューだけ）。押すとそのコーナーの URL に移る。
+ * 2 周で比べるときは、比較の周の損失（自己ベストとの差）を添える。`min_diff_s` 未満は灰色
+ */
+function renderCornerBar(state: State, doc: CourseData, d: Derived): void {
   ui.cornerBar.replaceChildren(
     ...cornersOf(doc).map((c) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.textContent = c.id;
-      b.title = `${c.name}（s = ${c.s_start}〜${c.s_end} m）`;
-      b.setAttribute("aria-pressed", String(c.id === state?.corner));
+      b.setAttribute("aria-pressed", String(c.id === state.corner));
+      const loss = cornerLoss(d.losses, c.id);
+      const titles = [`${c.name}（s = ${c.s_start}〜${c.s_end} m）`];
+      b.append(c.id);
+      if (loss != null && d.losses) {
+        const v = document.createElement("span");
+        v.className = loss < doc.min_diff_s ? "loss small" : "loss";
+        v.textContent = fmt(loss, 2, true);
+        b.append(" ", v);
+        titles.push(`自己ベストとの差 ${fmt(loss, 3, true)} s（${lapLabel(d.losses.lap)}）`);
+      }
+      b.title = titles.join("　");
       b.addEventListener("click", () => {
         window.location.hash = `corner/${c.id}`;
       });
@@ -387,34 +295,28 @@ function renderCornerBar(doc: CourseData): void {
   );
 }
 
-function renderTable(shown: Lap[], style: (lap: Lap) => LapStyle, dts: Map<string, Series>): void {
-  const head = ui.laps.createTHead();
-  head.replaceChildren();
-  const hr = head.insertRow();
-  const first = state!.multi ? "重ねる" : "役割";
-  for (const h of [first, "周", "source", "lap_valid", "complete", "t_end [s]", "最後の Δt [s]"]) {
-    const th = document.createElement("th");
-    th.textContent = h;
-    hr.append(th);
-  }
+function renderTable(state: State, d: Derived): void {
+  setHead(ui.laps, ["", "周", "タイム [s]", "基準との差 [s]"]);
   const body = ui.laps.tBodies[0] ?? ui.laps.createTBody();
   body.replaceChildren();
-  for (const lap of shown) {
+  for (const lap of d.shown) {
     const tr = body.insertRow();
-    if (lap.label === state?.ref) tr.className = "ref";
-    if (state!.multi) {
+    const cls = [lap === d.ref ? "ref" : "", lap.lap_valid ? "" : "invalid"].filter(Boolean);
+    if (cls.length) tr.className = cls.join(" ");
+    if (state.multi) {
       const box = document.createElement("input");
       box.type = "checkbox";
-      box.checked = state!.selected.has(lap.label);
+      box.checked = state.selected.has(lap.label);
       box.addEventListener("change", () => {
-        if (box.checked) state!.selected.add(lap.label);
-        else state!.selected.delete(lap.label);
-        rerender();
+        const selected = new Set(state.selected);
+        if (box.checked) selected.add(lap.label);
+        else selected.delete(lap.label);
+        update({ selected });
       });
       tr.insertCell().append(box);
     } else {
       // 2 周で比べるときは、基準と比較の周を示す。ほかの周を押すと比較の周にする
-      const role = lap.label === state!.ref ? "基準" : lap.label === state!.cmp ? "比較" : "";
+      const role = lap === d.ref ? "基準" : lap === d.cmp ? "比較" : "";
       const cell = tr.insertCell();
       if (role) {
         cell.textContent = role;
@@ -422,49 +324,36 @@ function renderTable(shown: Lap[], style: (lap: Lap) => LapStyle, dts: Map<strin
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = "比較にする";
-        b.addEventListener("click", () => {
-          state!.cmp = lap.label;
-          rerender();
-        });
+        b.addEventListener("click", () => update({ cmp: lap.label }));
         cell.append(b);
       }
     }
-    const name = document.createElement("span");
-    name.className = "lap-label";
-    name.append(swatch(style(lap)), lap.label);
-    tr.insertCell().append(name);
-    const dt = dts.get(lap.label);
+    tr.insertCell().append(lapName(lap, d.style(lap)));
+    const time = tr.insertCell();
+    if (lap.complete) {
+      time.textContent = fmt(lap.t_end, 3);
+    } else {
+      time.textContent = FRAGMENT;
+      time.title = `t_end ${fmt(lap.t_end, 3)} s`;
+    }
+    const diff = tr.insertCell();
+    const dt = d.dts.get(lap.label);
     const last = dt ? finalDelta(dt) : null;
-    const cells = [
-      lap.source,
-      String(lap.lap_valid),
-      String(lap.complete),
-      fmt(lap.t_end, 3),
-      dt ? fmt(last?.dt, 3, true) : "—",
-    ];
-    for (const c of cells) tr.insertCell().textContent = c;
+    diff.textContent = dt ? fmt(last?.dt, 3, true) : "—";
+    if (dt && last == null && !lap.complete) diff.title = `${FRAGMENT}なので出さない`;
   }
 }
 
-function renderReadout(
-  s: number | null,
-  laps: Lap[],
-  style: (lap: Lap) => LapStyle,
-  dts: Map<string, Series>,
-): void {
+function renderReadout(s: number | null, laps: Lap[], style: (lap: Lap) => LapStyle, dts: Map<string, Series>): void {
   if (s == null) {
     ui.readout.replaceChildren();
     return;
   }
   const head = document.createElement("div");
-  head.textContent = `s = ${s} m`;
+  head.textContent = `s = ${s} m　km/h　Δt [s]`;
   const rows = laps.map((lap) => {
     const row = document.createElement("div");
-    const dt = dts.get(lap.label)?.[s];
-    row.append(
-      swatch(style(lap)),
-      `${fmt(lap.speed_kmh[s], 1)} km/h　Δt ${fmt(dt, 3, true)} s　ax ${fmt(lap.ax[s], 2, true)}　ay ${fmt(lap.ay[s], 2, true)} G`,
-    );
+    row.append(swatch(style(lap)), `${fmt(lap.speed_kmh[s], 1)}　${fmt(dts.get(lap.label)?.[s], 3, true)}`);
     row.title = lap.label;
     return row;
   });
@@ -472,50 +361,34 @@ function renderReadout(
 }
 
 async function main(): Promise<void> {
-  const courses = await loadIndex();
+  courses = await loadIndex();
   if (courses.length === 0) throw new Error("data/index.json にコースがない。npm run data で書き出す");
   ui.course.replaceChildren(...courses.map((c) => new Option(c, c)));
   ui.course.addEventListener("change", () =>
     openCourse(ui.course.value).catch((e) => {
       // 読めなかったコースを選んだままにせず、画面に出ているコースに戻す
-      if (state) ui.course.value = state.doc.course;
+      if (doc) ui.course.value = doc.course;
       showError(e);
     }),
   );
-  ui.showInvalid.addEventListener("change", () => {
-    if (!state) return;
-    state.showInvalid = ui.showInvalid.checked;
-    rerender();
-  });
-  ui.cmp.addEventListener("change", () => {
-    if (!state) return;
-    state.cmp = ui.cmp.value || null;
-    rerender();
-  });
-  ui.multi.addEventListener("change", () => {
-    if (!state) return;
-    state.multi = ui.multi.checked;
-    rerender();
-  });
-  ui.ref.addEventListener("change", () => {
-    if (!state) return;
-    state.ref = ui.ref.value || null;
-    rerender();
-  });
-  ui.clear.addEventListener("click", () => {
+  ui.showInvalid.addEventListener("change", () => update({ showInvalid: ui.showInvalid.checked }));
+  ui.cmp.addEventListener("change", () => update({ cmp: ui.cmp.value || null }));
+  ui.multi.addEventListener("change", () => update({ multi: ui.multi.checked }));
+  ui.ref.addEventListener("change", () => update({ ref: ui.ref.value || null }));
+  // 区間の選択はグラフのクリックかダブルクリックで解除する。Esc でも解除できるようにする
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
     link.select(null);
     cornerLink.select(null);
   });
   window.addEventListener("hashchange", () => {
-    if (!state) return;
-    Object.assign(state, route(state.doc));
-    rerender();
+    if (doc && state) update(route(doc, state.corner));
   });
   // コース図の高さを画面に合わせ直す。リサイズ中に何度も描き直さないよう、止まってから描く
   let resizeTimer: number | undefined;
   window.addEventListener("resize", () => {
     window.clearTimeout(resizeTimer);
-    resizeTimer = window.setTimeout(rerender, 200);
+    resizeTimer = window.setTimeout(() => rerender(false), 200);
   });
   setupPanel(ui.panel.root, ui.panel.toggle);
   await openCourse(courses[0]!);
