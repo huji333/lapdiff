@@ -13,7 +13,6 @@ import {
   type Edges,
   type Lap,
   type Range,
-  type Refline,
   type Series,
 } from "./data";
 
@@ -82,8 +81,11 @@ function asChart(plot: (SVGSVGElement | HTMLElement) & Plot.Plot): Chart {
 }
 
 const ROAD_FILL = "#ececec";
-/** 全体のコース図で、ミニセクターの損失の色で塗った路面の不透明度。濃い赤の上でも周の線が読めるよう少し透かす */
-const PAINT_OPACITY = 0.75;
+/**
+ * 全体のコース図で損失の色を塗る帯の太さ [px]。全体の図では路面（約 11 m）が 4〜5 px にしかならず、
+ * 路面そのものを塗ると周の線と白い縁取りに隠れて色が見えない。そのため路面より太い帯を周の線の下に敷く
+ */
+const PAINT_BAND_WIDTH = 10;
 
 /** ミニセクターごとの色（境界は s [m]）。null の区間は塗らない */
 export interface Paint {
@@ -99,9 +101,8 @@ const SVG_NS = "http://www.w3.org/2000/svg";
  * コースの路面（左右の端の間を薄く塗った面）と端の細い線。周の線より先に（下に）置く。
  * `idx` は基準線の格子の添字。null なら 1 周全体を閉じた輪として描く（左右の輪を evenodd で塗り、間だけを面にする）。
  * `idx` があればその範囲の左の端を進み、右の端を戻る 1 つの多角形にする。
- * `paint` があれば、ミニセクターごとの路面をその色で塗り重ねる（全体のコース図の損失の色）。
  */
-function roadMarks(line: Refline, edges: Edges | null, idx: number[] | null, paint: Paint | null = null): Plot.Markish[] {
+function roadMarks(edges: Edges | null, idx: number[] | null): Plot.Markish[] {
   if (!edges) return [];
   const { left, right } = edges;
   const ii = idx ?? d3.range(left.x.length);
@@ -113,31 +114,11 @@ function roadMarks(line: Refline, edges: Edges | null, idx: number[] | null, pai
     const fy = scales.y!;
     const ring = (pts: (readonly [number, number])[]) =>
       "M" + pts.map(([x, y]) => `${fx(x)},${fy(y)}`).join("L") + "Z";
-    const g = document.createElementNS(SVG_NS, "g");
     const path = document.createElementNS(SVG_NS, "path");
     path.setAttribute("d", idx == null ? ring(l) + ring(r) : ring([...l, ...[...r].reverse()]));
     path.setAttribute("fill", ROAD_FILL);
     path.setAttribute("fill-rule", "evenodd");
-    g.append(path);
-    // ミニセクターの路面：境界の s の間の左の端を進み、右の端を戻る多角形。隣と境界の点を共有するので隙間はできない
-    paint?.color.forEach((color, k) => {
-      if (color == null) return;
-      const [s0, s1] = [paint.bounds[k]!, paint.bounds[k + 1]!];
-      const jj = line.s.flatMap((s, i) => (s >= s0 && s <= s1 ? [i] : []));
-      if (jj.length < 2) return;
-      const pl = jj.map((i) => [left.x[i]!, left.y[i]!] as const);
-      const pr = jj.map((i) => [right.x[i]!, right.y[i]!] as const);
-      const sector = document.createElementNS(SVG_NS, "path");
-      sector.setAttribute("d", ring([...pl, ...pr.reverse()]));
-      sector.setAttribute("fill", color);
-      sector.setAttribute("fill-opacity", String(PAINT_OPACITY));
-      // 隣の多角形との境目に背景の白い筋が出ないよう、同じ色の細い縁を付ける
-      sector.setAttribute("stroke", color);
-      sector.setAttribute("stroke-opacity", String(PAINT_OPACITY));
-      sector.setAttribute("stroke-width", "0.5");
-      g.append(sector);
-    });
-    return g;
+    return path;
   };
   const edgeLine = (pts: (readonly [number, number])[]) => {
     const closed = idx == null ? [...pts, pts[0]!] : pts;
@@ -168,12 +149,11 @@ export function courseMap(
   paint: Paint | null = null,
 ): Chart {
   const { refline: line } = doc;
-  // コースの端がないときだけ、基準線に沿った太い帯で塗る。1 m 刻みでたどり、両端を共有させてつなぎ目に隙間を作らない
-  const painted = paint && !doc.edges
+  // 損失の色は基準線に沿った太い帯で塗る。1 m 刻みでたどり、両端を共有させてつなぎ目に隙間を作らない
+  const painted = paint
     ? paint.color.flatMap((color, i) => {
         if (color == null) return [];
-        const pts = d3.range(paint.bounds[i]!, paint.bounds[i + 1]! + 1).map((s) => ({ ...pointAt(line, s), i, color }));
-        return pts;
+        return d3.range(paint.bounds[i]!, paint.bounds[i + 1]! + 1).map((s) => ({ ...pointAt(line, s), i, color }));
       })
     : [];
   const [x0, x1] = d3.extent(line.x) as [number, number];
@@ -200,16 +180,16 @@ export function courseMap(
       x: { domain: [x0 - pad, x1 + pad], axis: null },
       y: { domain: [y0 - pad, y1 + pad], axis: null },
       marks: [
-        Plot.line(painted, { x: "x", y: "y", z: "i", stroke: "color", strokeWidth: 9 }),
-        // 損失の色は路面そのものを塗る。周の線と重ねても、色の帯が線を隠さない
-        ...roadMarks(line, doc.edges, null, paint),
+        ...roadMarks(doc.edges, null),
+        // 帯は路面と端の線の上、周の線の下に置く。帯が路面より太いので、端の線は塗った区間で隠れる
+        Plot.line(painted, { x: "x", y: "y", z: "i", stroke: "color", strokeWidth: PAINT_BAND_WIDTH }),
         // 基準線は実車の周の平均で、コースの中心ではない。路面と紛れないよう細い線にする
         Plot.line(line.x, { x: Plot.identity, y: line.y, stroke: REFLINE_STROKE, strokeWidth: 1 }),
-        // 損失の色で塗ったときは、周の線に白い縁取りを付けて赤い路面から浮かせる
+        // 損失の色で塗ったときは、周の線に白い縁取りを付けて赤い帯から浮かせる
         ...laps.flatMap((lap) => {
           const st = style(lap);
           const casing = paint
-            ? [Plot.line(lap.x, { x: Plot.identity, y: lap.y, stroke: "white", strokeWidth: st.strokeWidth + 2 })]
+            ? [Plot.line(lap.x, { x: Plot.identity, y: lap.y, stroke: "white", strokeWidth: st.strokeWidth + 1 })]
             : [];
           return [...casing, Plot.line(lap.x, { x: Plot.identity, y: lap.y, ...st })];
         }),
@@ -490,7 +470,7 @@ export function cornerMap(
       x: { domain: dom.x, axis: null },
       y: { domain: dom.y, axis: null },
       marks: [
-        ...roadMarks(line, doc.edges, idx),
+        ...roadMarks(doc.edges, idx),
         // 基準線は実車の周の平均で、コースの中心ではない。路面と紛れないよう細い線にする
         Plot.line(rx, { x: Plot.identity, y: ry, stroke: REFLINE_STROKE, strokeWidth: 1, strokeDasharray: "4,3" }),
         Plot.arrow([{ a, b }], {

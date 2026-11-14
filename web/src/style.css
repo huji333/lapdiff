@@ -77,7 +77,7 @@ main {
   margin-top: 8px;
 }
 
-/* コーナーのビュー：右の列はグラフ（幅 640 px）が入る幅にとり、残りを拡大図に回す。
+/* コーナーのビュー：右の列はグラフ（幅 640 px）と表（約 690 px）が入る幅にとり、残りを拡大図に回す。
    拡大図の列の幅は中の図に引きずられない（min-width: 0）ので、main.ts はこの幅を測って図を描く。
    折り返すと貼り付いた拡大図が下のグラフを覆うので、折り返さずに両方を縮める */
 .cmap-col {
@@ -92,11 +92,17 @@ main {
 }
 
 #view-corner .dist-col {
-  flex: 0 1 680px;
+  flex: 0 1 700px;
 }
 
 #view-corner .g-row {
   flex-wrap: wrap;
+}
+
+/* コーナーの表（9 列）は列より広くなることがある。はみ出さず、表の中で横にスクロールさせる */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 #c-title {
