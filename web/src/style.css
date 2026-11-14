@@ -180,21 +180,54 @@ main {
   background: var(--ref-bg);
 }
 
-/* 区間ごとの損失のパネル（sections.ts）。画面に浮かせ、見出しのドラッグで動かす */
-.float-panel {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 10;
-  width: 320px;
-  max-height: 70vh;
+/* 区間ごとの損失のパネル（sections.ts）。全体のビューの右の列に置き、距離のグラフを隠さない。
+   列が広ければグラフの右に並べてスクロールしても見えたままにし、狭ければグラフの上に置く */
+#view-overview .dist-col {
+  container-type: inline-size;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: flex-start;
+}
+
+.dist-main {
+  flex: 1 1 760px;
+  min-width: 0;
+}
+
+.loss-panel {
+  flex: 1 1 100%;
   display: flex;
   flex-direction: column;
+  max-height: 40vh;
   background: #fff;
   border: 1px solid #bbb;
   border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
   font-size: 12px;
+}
+
+/* グラフの横に並べる余裕がないときは、行を 2 列に流して高さを抑える */
+.loss-panel .sp-list {
+  columns: 2 300px;
+  column-gap: 16px;
+}
+
+.loss-panel .sp-row {
+  break-inside: avoid;
+}
+
+@container (min-width: 1100px) {
+  .loss-panel {
+    order: 2;
+    flex: 0 0 320px;
+    position: sticky;
+    top: 8px;
+    max-height: calc(100vh - 16px);
+  }
+
+  .loss-panel .sp-list {
+    columns: auto;
+  }
 }
 
 .fp-head {
@@ -206,13 +239,10 @@ main {
   background: #f2f2f2;
   border-bottom: 1px solid var(--line);
   border-radius: 6px 6px 0 0;
-  cursor: move;
-  user-select: none;
-  touch-action: none;
   font-weight: bold;
 }
 
-.float-panel.collapsed .fp-body {
+.loss-panel.collapsed .fp-body {
   display: none;
 }
 

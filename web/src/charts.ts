@@ -43,6 +43,11 @@ export function lapColors(laps: Lap[]): Map<string, string> {
   return new Map(laps.map((l, i) => [l.label, scheme[i % scheme.length]!]));
 }
 
+/** コーナーの拡大図での周の線の太さ。基準ラップ（太い線）を 2.6、ほかを 2.2 にそろえ気味にする */
+function cornerLineWidth(base: number): number {
+  return base > 2 ? 2.6 : 2.2;
+}
+
 /** 基準ラップは太く、AC は破線にする。 */
 export function lapStyle(lap: Lap, colors: Map<string, string>, ref: string | null): LapStyle {
   return {
@@ -329,17 +334,17 @@ export function cornerMap(
         }),
         Plot.dot(ends, { x: "x", y: "y", r: 5, fill: CORNER_GRAY }),
         Plot.text(ends, { x: "x", y: "y", text: "label", dx: 10, textAnchor: "start", fill: CORNER_GRAY, fontSize: 11 }),
-        ...laps.map((l) =>
-          Plot.line(cut(l.x), {
-            x: Plot.identity,
-            y: cut(l.y),
-            ...style(l),
-            strokeWidth: style(l).strokeWidth * 1.2,
-            strokeOpacity: 0.9,
-            strokeLinejoin: "round",
-            strokeLinecap: "round",
-          }),
-        ),
+        // 周の線は白い縁取りの上に描く。重なっても、どちらが内側かを線の境目で読めるようにする。
+        // 基準ラップとの太さの差は小さくし、太い線に細い線のずれが埋もれないようにする
+        ...laps.flatMap((l) => {
+          const st = style(l);
+          const w = cornerLineWidth(st.strokeWidth);
+          const common = { x: Plot.identity, y: cut(l.y), strokeLinejoin: "round", strokeLinecap: "round" } as const;
+          return [
+            Plot.line(cut(l.x), { ...common, stroke: "white", strokeWidth: w + 2.5 }),
+            Plot.line(cut(l.x), { ...common, ...st, strokeWidth: w }),
+          ];
+        }),
         Plot.dot(brakes, {
           x: "x",
           y: "y",

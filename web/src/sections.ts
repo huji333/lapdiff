@@ -1,5 +1,5 @@
 // 区間ごとの損失：比較の周が、区間ごとの自己ベスト（同じソースの lap_valid の周、全期間）より何秒遅いか。
-// 浮かせたパネルに横棒で並べ、コース図は 50 m のミニセクターごとの差で塗る。
+// 全体のビューのパネルに横棒で並べ、コース図は 50 m のミニセクターごとの差で塗る。
 // 区間の定義と区間タイムは analysis.export が書く。自己ベストはここで section_times の最小から求める。
 
 import * as d3 from "d3";
@@ -58,23 +58,18 @@ export function lossColor(max: number): (loss: number | null) => string | null {
 
 const STORE_KEY = "lapdiff.sectionPanel";
 
-interface PanelPos {
-  left: number;
-  top: number;
-  collapsed: boolean;
-}
-
-function loadPos(): Partial<PanelPos> {
+function loadCollapsed(): boolean {
   try {
-    return JSON.parse(window.localStorage.getItem(STORE_KEY) ?? "{}") as Partial<PanelPos>;
+    const v = JSON.parse(window.localStorage.getItem(STORE_KEY) ?? "{}") as { collapsed?: boolean };
+    return v.collapsed ?? false;
   } catch {
-    return {};
+    return false;
   }
 }
 
-function savePos(p: Partial<PanelPos>): void {
+function saveCollapsed(collapsed: boolean): void {
   try {
-    window.localStorage.setItem(STORE_KEY, JSON.stringify({ ...loadPos(), ...p }));
+    window.localStorage.setItem(STORE_KEY, JSON.stringify({ collapsed }));
   } catch {
     // 保存できなくても描画には影響しない（プライベートウィンドウなど）
   }
@@ -86,48 +81,18 @@ function fmt(v: number | null, digits: number, sign = false): string {
   return sign && v > 0 ? `+${s}` : s;
 }
 
-/**
- * パネルの位置とたたみの状態を復元し、見出しのドラッグとボタンを付ける。起動時に 1 回だけ呼ぶ。
- * 位置は画面内に収まるよう丸める（画面を狭めたあとに見えなくならないように）。
- */
-export function setupPanel(panel: HTMLElement, head: HTMLElement, toggle: HTMLButtonElement): void {
-  const saved = loadPos();
-  const place = (left: number, top: number) => {
-    const maxLeft = Math.max(0, window.innerWidth - panel.offsetWidth);
-    const maxTop = Math.max(0, window.innerHeight - head.offsetHeight);
-    panel.style.left = `${Math.min(Math.max(0, left), maxLeft)}px`;
-    panel.style.top = `${Math.min(Math.max(0, top), maxTop)}px`;
-    panel.style.right = "auto";
-    panel.style.bottom = "auto";
-  };
-  if (saved.left != null && saved.top != null) requestAnimationFrame(() => place(saved.left!, saved.top!));
+/** パネルのたたみの状態を復元し、ボタンを付ける。起動時に 1 回だけ呼ぶ。 */
+export function setupPanel(panel: HTMLElement, toggle: HTMLButtonElement): void {
   const setCollapsed = (c: boolean) => {
     panel.classList.toggle("collapsed", c);
     toggle.textContent = c ? "開く" : "たたむ";
     toggle.setAttribute("aria-expanded", String(!c));
   };
-  setCollapsed(saved.collapsed ?? false);
+  setCollapsed(loadCollapsed());
   toggle.addEventListener("click", () => {
     const c = !panel.classList.contains("collapsed");
     setCollapsed(c);
-    savePos({ collapsed: c });
-  });
-
-  head.addEventListener("pointerdown", (ev) => {
-    if (ev.target instanceof HTMLButtonElement) return;
-    const r = panel.getBoundingClientRect();
-    const dx = ev.clientX - r.left;
-    const dy = ev.clientY - r.top;
-    head.setPointerCapture(ev.pointerId);
-    const move = (e: PointerEvent) => place(e.clientX - dx, e.clientY - dy);
-    const up = () => {
-      head.removeEventListener("pointermove", move);
-      head.removeEventListener("pointerup", up);
-      const p = panel.getBoundingClientRect();
-      savePos({ left: p.left, top: p.top });
-    };
-    head.addEventListener("pointermove", move);
-    head.addEventListener("pointerup", up);
+    saveCollapsed(c);
   });
 }
 

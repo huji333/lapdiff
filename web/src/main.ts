@@ -70,7 +70,6 @@ const ui = {
   laps: el<HTMLTableElement>("laps"),
   panel: {
     root: el<HTMLElement>("sections-panel"),
-    head: el<HTMLElement>("sp-head"),
     title: el<HTMLElement>("sp-title"),
     toggle: el<HTMLButtonElement>("sp-toggle"),
     body: el<HTMLElement>("sp-body"),
@@ -230,7 +229,10 @@ function render(): void {
     // コーナーのタブは、今選んでいるコーナーを開く
     if (a.dataset.view === "corner" && state.corner) a.href = `#corner/${state.corner}`;
   }
-  const mapHeight = Math.max(MAP_MIN_HEIGHT, window.innerHeight - 8);
+  // 図を画面の高さに合わせる。見出しや操作の下から始まるので、その分を引き、開いた時点で図の全体が見えるようにする
+  const mapHost = state.view === "corner" ? ui.corner.map : ui.map;
+  const mapTop = mapHost.getBoundingClientRect().top + window.scrollY;
+  const mapHeight = Math.max(MAP_MIN_HEIGHT, window.innerHeight - mapTop - 8);
 
   if (state.view === "corner") {
     ui.panel.root.hidden = true;
@@ -494,7 +496,7 @@ async function main(): Promise<void> {
     window.clearTimeout(resizeTimer);
     resizeTimer = window.setTimeout(rerender, 200);
   });
-  setupPanel(ui.panel.root, ui.panel.head, ui.panel.toggle);
+  setupPanel(ui.panel.root, ui.panel.toggle);
   await openCourse(courses[0]!);
 }
 
