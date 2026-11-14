@@ -4,6 +4,9 @@ from pathlib import Path
 
 import polars as pl
 
+from ingest.derive import by_distance
+from ingest.track import Refline
+
 COMMON_SCHEMA = pl.Schema(
     {
         "source": pl.String,
@@ -27,6 +30,33 @@ COMMON_SCHEMA = pl.Schema(
 
 # 生チャンネルの Parquet が共通スキーマと結合するためのキー
 JOIN_KEYS = ["source", "session_id", "lap", "t"]
+
+
+# 周ごとの時刻格子の列。`to_common` の入力
+TIMED_COLUMNS = ["lap", "t", "x", "y", "speed", "ax", "ay", "kappa", "steer", "throttle", "brake"]
+
+
+def to_common(
+    timed: pl.DataFrame, laps: pl.DataFrame, line: Refline, source: str, session_id: str
+) -> tuple[pl.DataFrame, dict[str, int]]:
+    """周ごとの時刻格子を、基準線の距離の格子にして共通スキーマにする（実車と AC で共通）。"""
+    if timed.columns != TIMED_COLUMNS:
+        raise ValueError(f"列は {TIMED_COLUMNS}: {timed.columns}")
+    with_abs = timed.join(
+        laps.select("lap", "t_start"), on="lap", how="left", maintain_order="left"
+    ).with_columns(t_abs=pl.col("t") + pl.col("t_start")).drop("t_start")
+    d, dropped = by_distance(with_abs, line)
+    common = (
+        d.with_columns(
+            source=pl.lit(source),
+            session_id=pl.lit(session_id),
+            lap=pl.col("lap").cast(pl.Int64),
+        )
+        .join(laps.select("lap", "lap_valid"), on="lap", how="left", maintain_order="left")
+        .select(COMMON_SCHEMA.names())
+    )
+    check_common(common)
+    return common, dropped
 
 
 def check_common(df: pl.DataFrame) -> None:

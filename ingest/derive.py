@@ -14,16 +14,25 @@
 - 符号：x を東、y を北にとる右手系で、左旋回（反時計回り）を正とする。
   `kappa > 0` と `ay > 0` はどちらも左旋回。RaceChrono の `lateral_acc|calc` と同じ向き。
 - `speed < min_speed` の標本では `kappa` と `ay` を null にする（停止中は曲率が定まらない）。
-- 手順5（基準線への射影）は後のタスクで実装する。`s` と `dist_norm` はすべて null で出す。
+- `derive` は手順4までで、`s` と `dist_norm` を null で出す。
+- 手順5は `by_distance`：周ごとに基準線へ射影して `s` を求め、距離 `STEP` [m] 刻みの格子に
+  ほかの列（`t` を含む）を線形補間する。計測線をまたぐ所は前後の周の点も使う。
+  次の点は使わず、件数を返す。
+  - 基準線から `MAX_OFFSET` [m] より離れた点（ピットレーンなど）
+  - それまでの最大の `s` を超えない点（停止、後退）
+  `dist_norm` は `s / 基準線の全長`。
 """
 
 import numpy as np
 import polars as pl
 from scipy.signal import savgol_filter
 
+from ingest.track import STEP, Refline, project
+
 G = 9.80665
 
 DERIVED_COLUMNS = ["t", "x", "y", "speed", "ax", "ay", "kappa", "s", "dist_norm"]
+MAX_OFFSET = 30.0
 
 
 def derive(
@@ -95,3 +104,65 @@ def _derive_segment(t, x, y, speed, dt, window, polyorder, min_speed) -> dict[st
     kappa = np.where(vs >= min_speed, kappa, np.nan)
     ay = vs**2 * kappa / G
     return {"t": tg, "x": xs, "y": ys, "speed": vs, "ax": ax, "ay": ay, "kappa": kappa}
+
+
+def by_distance(
+    timed: pl.DataFrame, line: Refline, max_gap_s: float = 0.5
+) -> tuple[pl.DataFrame, dict[str, int]]:
+    """周ごとの時刻格子を、基準線の距離 1 m 刻みに取り直す。
+
+    `timed` は `lap`、`t`（周の開始からの秒）、`t_abs`（全周で共通の時刻）、`x`、`y` とほかの数値列。
+    返り値は `s`、`dist_norm` を足した表（`t_abs` は除く）と、使わなかった点の件数。
+
+    - 計測線の付近を補間できるよう、前後の周の隣の点（時刻の飛びが `max_gap_s` 以下）も使う。
+    - 周の `s` は、`[0, 全長]` から外れる点が最も少なくなる周回に置く。
+      格子は `[0, 全長)` の範囲だけ作る。範囲の外は前後の周の区間である。
+    """
+    timed = timed.sort("t_abs")
+    cols = [c for c in timed.columns if c not in ("lap", "t_abs", "s", "dist_norm")]
+    lap_arr = timed["lap"].to_numpy()
+    t_abs = timed["t_abs"].to_numpy()
+    xy_all = np.c_[timed["x"], timed["y"]]
+    values = {c: timed[c].cast(pl.Float64).fill_null(np.nan).to_numpy() for c in cols}
+    n = len(lap_arr)
+    L = line.length
+
+    parts = []
+    dropped = {"off_line": 0, "not_advancing": 0}
+    bounds = np.flatnonzero(np.diff(lap_arr)) + 1
+    for a, b in zip(np.r_[0, bounds], np.r_[bounds, n], strict=True):
+        lap = lap_arr[a]
+        t_start = t_abs[a] - values["t"][a]
+        lo = a - 1 if a > 0 and t_abs[a] - t_abs[a - 1] <= max_gap_s else a
+        hi = b + 1 if b < n and t_abs[b] - t_abs[b - 1] <= max_gap_s else b
+        own = np.zeros(hi - lo, dtype=bool)
+        own[a - lo : b - lo] = True
+
+        s, d = project(xy_all[lo:hi], line)
+        on = d <= MAX_OFFSET
+        dropped["off_line"] += int(np.sum(~on & own))
+        idx = np.flatnonzero(on)
+        if len(idx) == 0:
+            continue
+        s = s[idx]
+        adv = np.r_[True, s[1:] > np.maximum.accumulate(s)[:-1]]
+        dropped["not_advancing"] += int(np.sum(~adv & own[idx]))
+        s, idx = s[adv], idx[adv] + lo
+
+        k = min(range(-2, 3), key=lambda k: (np.sum((s + k * L < -5) | (s + k * L > L + 5)),
+                                             abs(s[0] + k * L)))
+        s = s + k * L
+        grid = np.arange(np.ceil(max(s[0], 0) / STEP), np.floor(min(s[-1], L) / STEP) + 1) * STEP
+        grid = grid[grid < L] + 0.0  # -0.0 を 0.0 にする
+        if len(grid) == 0:
+            continue
+        out = {"lap": np.full(len(grid), lap), "s": grid}
+        for c in cols:
+            v = t_abs[idx] - t_start if c == "t" else values[c][idx]
+            out[c] = np.interp(grid, s, v)
+        parts.append(pl.DataFrame(out))
+    df = pl.concat(parts).with_columns(
+        pl.col(cols).fill_nan(None),
+        dist_norm=pl.col("s") / L,
+    )
+    return df, dropped

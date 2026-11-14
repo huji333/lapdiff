@@ -28,7 +28,8 @@ import polars as pl
 
 from ingest.derive import derive
 from ingest.laps import lap_table
-from ingest.schema import COMMON_SCHEMA, JOIN_KEYS, write_session
+from ingest.schema import JOIN_KEYS, TIMED_COLUMNS, to_common, write_session
+from ingest.track import load_refline
 
 SOURCE = "racechrono"
 SUPPORTED_FORMATS = {"3"}
@@ -52,12 +53,27 @@ class RaceChronoCsv:
 
 
 @dataclass(frozen=True)
+class Timed:
+    """基準線に射影する前の段。基準線を作るときはここまでを使う。"""
+
+    timed: pl.DataFrame  # 周ごとの 10 Hz の格子（`ingest.schema.TIMED_COLUMNS`）
+    raw: pl.DataFrame
+    laps: pl.DataFrame
+    session_id: str
+    course_dir: Path
+    n_duplicates: int
+    n_no_fix: int  # 位置か速度が欠けていて派生チャンネルに使えなかった行
+
+
+@dataclass(frozen=True)
 class Session:
     common: pl.DataFrame
+    timed: pl.DataFrame
     raw: pl.DataFrame
     laps: pl.DataFrame
     n_duplicates: int
-    n_no_fix: int  # 位置か速度が欠けていて派生チャンネルに使えなかった行
+    n_no_fix: int
+    dropped: dict[str, int]  # 距離の格子に使わなかった点（`ingest.derive.by_distance`）
 
 
 def parse_csv(path: Path) -> RaceChronoCsv:
@@ -109,19 +125,19 @@ def parse_csv(path: Path) -> RaceChronoCsv:
     )
 
 
-def load_origin(track_name: str, track_dir: Path = TRACK_DIR) -> tuple[float, float]:
-    """RaceChrono の Track name に一致する `origin.toml` の (lat, lon) を返す。"""
+def find_course(track_name: str, track_dir: Path = TRACK_DIR) -> tuple[Path, float, float]:
+    """RaceChrono の Track name に一致するコースの (ディレクトリ, 原点の lat, lon) を返す。"""
     found = []
     for p in sorted(track_dir.glob("*/origin.toml")):
         conf = tomllib.loads(p.read_text(encoding="utf-8"))
         if track_name in conf["track_names"]:
-            found.append((p, conf["lat"], conf["lon"]))
+            found.append((p.parent, conf["lat"], conf["lon"]))
     if len(found) != 1:
         raise ValueError(
             f"Track name {track_name!r} に一致する origin.toml が1つではない: "
             f"{[str(f[0]) for f in found]}（{track_dir}/<course>/origin.toml を足す）"
         )
-    return found[0][1], found[0][2]
+    return found[0]
 
 
 def to_enu(lat, lon, lat0: float, lon0: float) -> tuple[np.ndarray, np.ndarray]:
@@ -160,21 +176,24 @@ def lap_numbers(data: pl.DataFrame) -> pl.Series:
 
 
 def lap_starts(ts: pl.Series, lap: pl.Series) -> pl.DataFrame:
-    """周ごとの開始時刻。`lap >= 1` の周は最初の行が計測線の通過（RaceChrono が挿入する行）。"""
-    return (
+    """周ごとの開始時刻。
+
+    2 番目以降の周は、最初の行が計測線の通過（RaceChrono が挿入する行）。
+    ファイルの最初の周は、アウトラップか、切り出したファイルで途中から始まった周なので、開始を観測していない。
+    """
+    starts = (
         pl.DataFrame({"lap": lap, "ts": ts})
         .group_by("lap", maintain_order=True)
         .agg(pl.col("ts").first().alias("t_start"))
-        .with_columns(start_seen=pl.col("lap") >= 1)
     )
+    return starts.with_columns(start_seen=pl.int_range(pl.len()) > 0)
 
 
-def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
+def ingest_timed(path: Path, track_dir: Path = TRACK_DIR) -> Timed:
     rc = parse_csv(path)
     data = rc.data
     g = rc.gps_source
-    track_name = rc.meta.get("Track name", "")
-    lat0, lon0 = load_origin(track_name, track_dir)
+    course_dir, lat0, lon0 = find_course(rc.meta.get("Track name", ""), track_dir)
 
     ts = data[TS]
     session_id = datetime.fromtimestamp(ts[0], UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -195,25 +214,37 @@ def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
     d = derive(fix[TS].to_numpy(), x, y, fix[f"speed|{g}"].to_numpy())
 
     t_abs = d["t"].to_numpy()
-    common = (
-        d.with_columns(
-            source=pl.lit(SOURCE),
-            session_id=pl.lit(session_id),
-            lap=pl.Series(lap_of(t_abs), dtype=pl.Int64),
-        )
-        .join(laps.select("lap", "t_start", "lap_valid"), on="lap", how="left")
-        .with_columns(
-            (pl.col("t") - pl.col("t_start")).alias("t"),
-            *(pl.lit(None, dtype=pl.Float64).alias(c) for c in ("steer", "throttle", "brake")),
-        )
-        .select(COMMON_SCHEMA.names())
+    lap_g = lap_of(t_abs)
+    t_start = laps["t_start"].to_numpy()[np.searchsorted(laps["lap"].to_numpy(), lap_g)]
+    timed = d.with_columns(
+        *(pl.lit(None, dtype=pl.Float64).alias(c) for c in ("steer", "throttle", "brake")),
+        lap=pl.Series(lap_g, dtype=pl.Int64),
+        t=pl.Series(t_abs - t_start),
+    ).select(TIMED_COLUMNS)
+    return Timed(
+        timed=timed,
+        raw=raw,
+        laps=laps,
+        session_id=session_id,
+        course_dir=course_dir,
+        n_duplicates=rc.n_duplicates,
+        n_no_fix=data.height - fix.height,
+    )
+
+
+def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
+    tm = ingest_timed(path, track_dir)
+    common, dropped = to_common(
+        tm.timed, tm.laps, load_refline(tm.course_dir), SOURCE, tm.session_id
     )
     return Session(
         common=common,
-        raw=raw,
-        laps=laps,
-        n_duplicates=rc.n_duplicates,
-        n_no_fix=data.height - fix.height,
+        timed=tm.timed,
+        raw=tm.raw,
+        laps=tm.laps,
+        n_duplicates=tm.n_duplicates,
+        n_no_fix=tm.n_no_fix,
+        dropped=dropped,
     )
 
 
@@ -223,6 +254,7 @@ def main(argv: list[str]) -> None:
     s = ingest(Path(argv[0]))
     paths = write_session(s.common, s.raw, Path(argv[1]))
     print(f"重複行 {s.n_duplicates} 行を除去、位置・速度が欠けた行 {s.n_no_fix} 行は派生に不使用")
+    print(f"距離の格子に使わなかった 10 Hz の点: {s.dropped}")
     with pl.Config(tbl_rows=-1):
         print(s.laps)
     for p in paths:

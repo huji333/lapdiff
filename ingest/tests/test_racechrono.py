@@ -73,7 +73,8 @@ def test_lap_split(session):
     # 各周の t は 0 から始まる
     first = session.raw.group_by("lap").agg(pl.col("t").min())
     assert (first["t"] == 0).all()
-    assert (session.common["t"] >= 0).all()
+    # 距離の格子は計測線（s = 0）から始まり、その時刻は周の開始とほぼ一致する
+    assert (session.common["t"] >= -0.1).all()
 
 
 def test_lap_valid(session):
@@ -86,8 +87,9 @@ def test_lap_valid(session):
 def test_common_schema_and_roundtrip(session, tmp_path):
     c = session.common
     assert c.schema == COMMON_SCHEMA
-    for col in ["steer", "throttle", "brake", "s", "dist_norm"]:
+    for col in ["steer", "throttle", "brake"]:
         assert c[col].null_count() == c.height
+    assert c["s"].null_count() == c["dist_norm"].null_count() == 0
     assert (c["source"] == "racechrono").all()
     assert session.raw.columns[:4] == JOIN_KEYS
     p_common, p_raw = write_session(c, session.raw, tmp_path)
@@ -110,7 +112,7 @@ def test_enu():
 
 
 def test_derived_channels_plausible(session):
-    lap = session.common.filter(pl.col("lap") == 2)
+    lap = session.timed.filter(pl.col("lap") == 2)
     np.testing.assert_allclose(np.diff(lap["t"].to_numpy()), 0.1, atol=1e-6)
     assert lap["ax"].null_count() == lap["ay"].null_count() == 0
     # ND ロードスター（街乗りタイヤ）として妥当な範囲
@@ -123,7 +125,7 @@ def test_derived_channels_plausible(session):
 
 def test_ay_sign_matches_turn_direction(session):
     c = (
-        session.common.drop_nulls("ay")
+        session.timed.drop_nulls("ay")
         .join(session.laps.select("lap", "t_start"), on="lap")
         .with_columns(t_abs=pl.col("t") + pl.col("t_start"))
         .sort("t_abs")
@@ -144,8 +146,28 @@ def test_full_session():
     assert s.laps["lap"].to_list() == list(range(14))
     assert s.n_duplicates == 7210
     assert s.laps.filter("lap_valid")["lap"].to_list() == [2, 3, 4, 5, 6, 7, 9, 10, 11, 12]
-    valid = s.common.filter("lap_valid").sort("lap", "t")
+    valid = s.timed.join(s.laps.filter("lap_valid").select("lap"), on="lap").sort("lap", "t")
     lengths = valid.group_by("lap").agg(
         (pl.col("x").diff() ** 2 + pl.col("y").diff() ** 2).sqrt().sum().alias("m")
     )["m"]
     assert lengths.min() > 3690 and lengths.max() < 3730
+
+
+BEST = ROOT / "fixtures/racechrono/okayama_lap10_best.csv"
+
+
+def test_best_lap_fixture_on_distance_grid():
+    """切り出した best lap（lap 10）が、基準線の距離の格子で 1 周分そろう。"""
+    s = ingest(BEST)
+    assert s.laps["lap"].to_list() == [9, 10, 11]
+    # 切り出したファイルの最初の周（lap 9）は途中から始まっている
+    assert s.laps["closed"].to_list() == [False, True, False]
+    lap = s.common.filter(pl.col("lap") == 10)
+    assert lap["lap_valid"].all()
+    np.testing.assert_allclose(np.diff(lap["s"].to_numpy()), 1.0)
+    assert lap["s"].min() <= 1 and lap["s"].max() >= 3700
+    # 時刻は距離とともに増え、終わりは計測したラップタイムに一致する
+    assert (np.diff(lap["t"].to_numpy()) > 0).all()
+    assert lap["t"].max() == pytest.approx(131.468, abs=0.3)
+    assert lap["dist_norm"].max() <= 1.0
+    assert s.dropped == {"off_line": 0, "not_advancing": 0}

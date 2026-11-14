@@ -1,7 +1,7 @@
 """AC のワールド座標から局所座標（ENU）への変換（SPEC「基準線と座標変換」）。
 
 使い方（推定して `track/<course>/ac_transform.toml` を書く）：
-`python -m ingest.ac_transform <acraw> <racechrono csv> <lap> <course>`
+`python -m ingest.ac_transform <acraw> <course>`
 
 - AC のワールド座標は左手系で y が上。水平面を `(x, -z)` にとると、x 東・y 北の ENU と同じ右手系になる。
   2026-11-14 のキャプチャで確かめた：`(x, z)` のままでは岡山の周回が反時計回り（実車は時計回り）になり、
@@ -9,8 +9,7 @@
 - 変換は相似変換 `p_enu = scale * R(rotation) @ (x, -z) + (tx, ty)`。鏡映は含めない。
 - 推定は ICP（最近傍点の対応づけと Umeyama 法の繰り返し）。初期の回転角を 15° おきに試し、
   残差の RMS が最小のものを採る。
-- 合わせる先は、本来は基準線（SPEC）。基準線ができるまでは実車の1周の軌跡に合わせ、
-  何に合わせたかを toml の `fit_target` に残す。
+- 合わせる先は基準線（`track/<course>/refline.csv`）。
 - スケールが 1 から `SCALE_TOLERANCE` 以上外れたら警告する。
 """
 
@@ -92,8 +91,10 @@ def fit_similarity(
     return sim, dist
 
 
-def load_transform(ac_track: str, ac_config: str, track_dir: Path = TRACK_DIR) -> Similarity:
-    """AC の track / trackConfiguration に一致する `ac_transform.toml` を読む。"""
+def load_transform(
+    ac_track: str, ac_config: str, track_dir: Path = TRACK_DIR
+) -> tuple[Path, Similarity]:
+    """AC の track / trackConfiguration に一致するコースのディレクトリと変換を返す。"""
     found = []
     for p in sorted(track_dir.glob("*/ac_transform.toml")):
         conf = tomllib.loads(p.read_text(encoding="utf-8"))
@@ -104,32 +105,24 @@ def load_transform(ac_track: str, ac_config: str, track_dir: Path = TRACK_DIR) -
             f"AC の {ac_track}/{ac_config} に一致する ac_transform.toml が1つではない: "
             f"{[str(f[0]) for f in found]}（python -m ingest.ac_transform で推定する）"
         )
-    conf = found[0][1]
-    return Similarity(conf["scale"], conf["rotation_deg"], conf["tx"], conf["ty"])
+    path, conf = found[0]
+    return path.parent, Similarity(conf["scale"], conf["rotation_deg"], conf["tx"], conf["ty"])
 
 
 def main(argv: list[str]) -> None:
-    if len(argv) != 4:
-        raise SystemExit(
-            "usage: python -m ingest.ac_transform <acraw> <racechrono csv> <lap> <course>"
-        )
-    import polars as pl
+    if len(argv) != 2:
+        raise SystemExit("usage: python -m ingest.ac_transform <acraw> <course>")
+    from ingest import acraw
+    from ingest.track import load_refline
 
-    from ingest import acraw, racechrono
-
-    acpath, rcpath, lap, course = Path(argv[0]), Path(argv[1]), int(argv[2]), argv[3]
+    acpath, course = Path(argv[0]), argv[1]
     cap = acraw.read_acraw(acpath)
-    laps = acraw.lap_starts(cap)
-    closed = acraw.closed_laps(cap, laps)
+    closed = acraw.closed_laps(cap, acraw.lap_starts(cap))
     if closed.size == 0:
         raise SystemExit(f"{acpath}: 閉じた周がない")
     src = ac_plane(cap.graphics["carCoordinates"][closed])[::30]
-
-    rc = racechrono.ingest(rcpath)
-    tgt = rc.common.filter(pl.col("lap") == lap)
-    if tgt.height == 0 or not rc.laps.filter(pl.col("lap") == lap)["lap_valid"].item():
-        raise SystemExit(f"{rcpath}: lap {lap} が有効な周ではない")
-    sim, dist = fit_similarity(src, np.c_[tgt["x"], tgt["y"]])
+    line = load_refline(TRACK_DIR / course)
+    sim, dist = fit_similarity(src, np.r_[line.xy, line.xy[:1]])
 
     p50, p95, pmax = np.percentile(dist, [50, 95, 100])
     text = f"""# AC のワールド座標の水平面 (x, -z) から局所座標（ENU）への相似変換。ingest.ac_transform が書く。
@@ -141,8 +134,7 @@ rotation_deg = {sim.rotation_deg:.4f}
 tx = {sim.tx:.3f}
 ty = {sim.ty:.3f}
 
-# 推定の出どころ。基準線ができたら、基準線に合わせて推定し直す
-fit_target = "racechrono {rcpath.name} lap {lap}"
+# 推定の出どころ。合わせた先は基準線（refline.csv）
 fit_source = "{acpath.name}"
 fit_residual_m = {{ median = {p50:.2f}, p95 = {p95:.2f}, max = {pmax:.2f} }}
 """
