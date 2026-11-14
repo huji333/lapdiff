@@ -63,6 +63,17 @@ export class Link {
 
 type Overlay = d3.Selection<SVGGElement, unknown, null, undefined>;
 
+/** 選んだ区間の帯と、ドラッグの枠の塗りの濃さ。どちらも同じ見た目にする */
+const SELECT_OPACITY = 0.15;
+
+/**
+ * d3-brush の枠（ドラッグしている間と、離した後に残る矩形）を選択の色で塗る。既定の灰色のままだと、
+ * ドラッグしたグラフだけ選択の色が違って見える。d3-brush は枠を作るときにしか塗らないので、作った後に上書きする。
+ */
+function paintBrush(g: d3.Selection<SVGGElement, unknown, null, undefined>): void {
+  g.select(".selection").attr("fill", SELECT_COLOR).attr("fill-opacity", SELECT_OPACITY).attr("stroke", SELECT_COLOR);
+}
+
 function overlay(chart: Chart): Overlay {
   return d3.select(chart.svg).append("g").attr("pointer-events", "none");
 }
@@ -87,7 +98,7 @@ export function attachDistance(chart: Chart, id: DistanceId, link: Link): void {
     .attr("y", top)
     .attr("height", bottom - top)
     .attr("fill", SELECT_COLOR)
-    .attr("fill-opacity", 0.15)
+    .attr("fill-opacity", SELECT_OPACITY)
     .attr("display", "none");
   const rule = layer
     .append("line")
@@ -110,6 +121,7 @@ export function attachDistance(chart: Chart, id: DistanceId, link: Link): void {
       else if (ev.type === "end") link.select(null);
     });
   const g = svg.append("g").call(brush);
+  paintBrush(g);
 
   svg
     .on("pointermove", (ev: PointerEvent) => {
@@ -175,6 +187,7 @@ export function attachMap(
       else if (ev.type === "end") link.select(null);
     });
   const g = svg.append("g").call(brush);
+  paintBrush(g);
   svg.on("dblclick", () => link.select(null));
 
   link.add({
