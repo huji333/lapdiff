@@ -108,11 +108,13 @@ def _derive_segment(t, x, y, speed, dt, window, polyorder, min_speed) -> dict[st
 
 def by_distance(
     timed: pl.DataFrame, line: Refline, max_gap_s: float = 0.5
-) -> tuple[pl.DataFrame, dict[str, int]]:
+) -> tuple[pl.DataFrame, dict[str, int], pl.DataFrame]:
     """周ごとの時刻格子を、基準線の距離 1 m 刻みに取り直す。
 
     `timed` は `lap`、`t`（周の開始からの秒）、`t_abs`（全周で共通の時刻）、`x`、`y` とほかの数値列。
-    返り値は `s`、`dist_norm` を足した表（`t_abs` は除く）と、使わなかった点の件数。
+    返り値は `s`、`dist_norm` を足した表（`t_abs` は除く）、使わなかった点の件数、
+    周ごとの `s_first`、`s_last`（使った点の最初と最後の `s`）と `max_gap_m`（使った点どうしの
+    `s` の最大の間隔）。格子はこの間隔を線形補間で埋めているので、大きければその区間は信用できない。
 
     - 計測線の付近を補間できるよう、前後の周の隣の点（時刻の飛びが `max_gap_s` 以下）も使う。
     - 周の `s` は、`[0, 全長]` から外れる点が最も少なくなる周回に置く。
@@ -128,6 +130,7 @@ def by_distance(
     L = line.length
 
     parts = []
+    stats = []
     dropped = {"off_line": 0, "not_advancing": 0}
     bounds = np.flatnonzero(np.diff(lap_arr)) + 1
     for a, b in zip(np.r_[0, bounds], np.r_[bounds, n], strict=True):
@@ -152,6 +155,8 @@ def by_distance(
         k = min(range(-2, 3), key=lambda k: (np.sum((s + k * L < -5) | (s + k * L > L + 5)),
                                              abs(s[0] + k * L)))
         s = s + k * L
+        gap = float(np.max(np.diff(s))) if len(s) > 1 else np.inf
+        stats.append((lap, float(s[0]), float(s[-1]), gap))
         grid = np.arange(np.ceil(max(s[0], 0) / STEP), np.floor(min(s[-1], L) / STEP) + 1) * STEP
         grid = grid[grid < L] + 0.0  # -0.0 を 0.0 にする
         if len(grid) == 0:
@@ -165,4 +170,7 @@ def by_distance(
         pl.col(cols).fill_nan(None),
         dist_norm=pl.col("s") / L,
     )
-    return df, dropped
+    lap_stats = pl.DataFrame(
+        stats, schema=["lap", "s_first", "s_last", "max_gap_m"], orient="row"
+    ).with_columns(pl.col("lap").cast(pl.Int64))
+    return df, dropped, lap_stats

@@ -12,7 +12,8 @@
   通過はレコードの間（最大 3 ms 程度）で起きるので、こうすると AC の計時とほぼ一致する。
   ファイルの先頭の周は記録の途中から始まっているので閉じた周として扱わない。
   `completedLaps` が減ったり 2 以上増えたりしたら失敗させる（collector がファイルを分けているはず）。
-- `lap_time_ac`：次の周の開始レコードの `graphics.iLastTime`。周の表に並べて答え合わせに使う。
+- `lap_time_ac`：次の周の開始レコードの `graphics.iLastTime`。`lap_time` と `LAP_TIME_TOL` 以上
+  違う周（ポーズを含む周など）は、警告を出して無効にする。
 - 局所座標：`track/<course>/ac_transform.toml`（`ingest.ac_transform`）で水平面を ENU に移す。
 - 派生チャンネル：`physics.speedKmh` と変換後の位置を `ingest.derive.derive` に渡す（実車と同じ関数）。
   derive が 10 Hz の格子に補間するので、これが SPEC の「約10 Hz に間引く」に当たる。
@@ -24,6 +25,7 @@
 
 import struct
 import sys
+import warnings
 import zlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -40,6 +42,7 @@ from ingest.schema import JOIN_KEYS, TIMED_COLUMNS, to_common, write_session
 from ingest.track import load_refline
 
 SOURCE = "ac"
+LAP_TIME_TOL = 0.05  # AC の計時（iLastTime）との差の上限 [s]。fixture では 2 ms
 MAGIC = b"ACRAW\0\0\0"
 SUPPORTED_FORMATS = {1}
 HEADER = struct.Struct("<8sI16sIIIq")  # FORMAT.md の「ヘッダ」
@@ -229,7 +232,21 @@ def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
         throttle=pl.Series(np.interp(tg, t, p["gas"])),
         brake=pl.Series(np.interp(tg, t, p["brake"])),
     ).select(TIMED_COLUMNS)
-    common, dropped = to_common(timed, laps, load_refline(course_dir), SOURCE, session_id)
+    # ポーズ中の時間は host_time_ns に入るが、AC の計時に入るかはまだ確かめていない（issue #2）。
+    # どちらであっても、自身の計時と合わない周は比べられないので無効にする
+    mismatch = laps.filter(
+        (pl.col("lap_time") - pl.col("lap_time_ac")).abs() > LAP_TIME_TOL
+    )
+    if mismatch.height:
+        warnings.warn(
+            f"AC の計時とラップタイムが {LAP_TIME_TOL} s 以上違う周を無効にした: "
+            f"{mismatch.select('lap', 'lap_time', 'lap_time_ac').rows()}",
+            stacklevel=2,
+        )
+    agrees = (pl.col("lap_time") - pl.col("lap_time_ac")).abs() <= LAP_TIME_TOL
+    common, laps, dropped = to_common(
+        timed, laps, load_refline(course_dir), SOURCE, session_id, usable=agrees
+    )
     return Session(common=common, timed=timed, raw=raw.select(*JOIN_KEYS, pl.exclude(JOIN_KEYS)),
                    laps=laps, capture=cap, dropped=dropped)
 

@@ -81,7 +81,7 @@ def test_by_distance_interpolates_time():
     xy = line.xy[::5]
     t = line.s[::5] / 20  # 20 m/s
     timed = pl.DataFrame({"lap": 1, "t": t, "t_abs": t, "x": xy[:, 0], "y": xy[:, 1], "steer": None})
-    d, dropped = by_distance(timed, line)
+    d, dropped, _ = by_distance(timed, line)
     assert dropped == {"off_line": 0, "not_advancing": 0}
     np.testing.assert_allclose(d["t"].to_numpy(), d["s"].to_numpy() / 20, atol=1e-4)
     assert d["steer"].null_count() == d.height
@@ -114,7 +114,10 @@ def test_by_distance_spans_timing_line():
         "x": np.interp(u, np.r_[line.s, line.length], np.r_[line.x, line.x[0]]),
         "y": np.interp(u, np.r_[line.s, line.length], np.r_[line.y, line.y[0]]),
     })
-    d, _ = by_distance(timed, line)
+    d, _, stats = by_distance(timed, line)
     lap1 = d.filter(pl.col("lap") == 1)
     assert lap1["s"].min() == 0 and lap1["s"].max() == np.floor(line.length - 1e-9)
     np.testing.assert_allclose(lap1["t"].to_numpy(), lap1["s"].to_numpy() / 20, atol=1e-3)
+    st = stats.filter(pl.col("lap") == 1)
+    assert st["s_first"].item() < 0 and st["s_last"].item() > line.length
+    assert st["max_gap_m"].item() == pytest.approx(2.0, abs=0.01)  # 20 m/s × 0.1 s

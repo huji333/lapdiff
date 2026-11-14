@@ -199,3 +199,18 @@ def test_completed_laps_decrease_fails(head_bytes, tmp_path):
     g["completedLaps"][1000:] -= 1
     with pytest.raises(ValueError, match="completedLaps"):
         acraw.lap_starts(acraw.AcCapture(**{**c.__dict__, "graphics": g}))
+
+
+def test_pause_in_lap_invalidates_it(tmp_path):
+    """周の途中でホスト時刻だけが 5 s 進む（ポーズ）と、AC の計時と合わず無効になる。"""
+    d = zlib.decompressobj(wbits=31)
+    data = bytearray(d.decompress(FIXTURE.read_bytes()))
+    k = 20000  # lap 2 の途中のレコード
+    rec = np.ndarray((N_RECORDS,), dtype="<i8", buffer=data, offset=BODY, strides=(REC,))
+    rec[k:] += 5_000_000_000
+    p = write_gz(tmp_path / "pause.acraw.gz", bytes(data))
+    with pytest.warns(UserWarning, match="AC の計時"):
+        s = acraw.ingest(p)
+    lap2 = s.laps.filter(pl.col("lap") == 2)
+    assert lap2["lap_time"].item() == pytest.approx(132.886, abs=0.01)
+    assert not lap2["lap_valid"].item()
