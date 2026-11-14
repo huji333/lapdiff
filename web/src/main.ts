@@ -1,14 +1,26 @@
 // ビュー 1 の画面：状態と配線。状態（derive.ts の State）が操作欄の値の唯一の正で、変えるのは update だけ。
 // 描くときは derive で状態から値を求め、操作欄（renderToolbar）とグラフ（renderCharts）を描く。どちらも状態を変えない。
+// 操作欄は sticky のツールバー：ビューのタブ、コース、基準 vs 比較のチップ（押すと周を選ぶポップオーバー）、
+// 2 周 / 重ねる、選んだ区間のチップ。コーナーのビューでは 2 段目にコーナーのチップを並べる。
 
 import "./style.css";
 import { attachDistance, attachMap, drawDots, gAt, Link } from "./brush";
 import { renderCorner } from "./corner";
-import { lossColor, lossLegend, miniLosses, renderPanel, setupPanel } from "./sections";
-import { courseMap, distanceChart, gDomain, ggChart, type Chart, type LapStyle, type Paint } from "./charts";
+import { LOSS_RAMP, lossColor, lossLegend, miniLosses, renderPanel, setupPanel } from "./sections";
+import {
+  courseMap,
+  distanceChart,
+  gDomain,
+  ggChart,
+  PAIR_COLORS,
+  SELECT_COLOR,
+  type Chart,
+  type LapStyle,
+  type Paint,
+} from "./charts";
 import { cornersOf, finalDelta, loadCourse, loadIndex, type CourseData, type Lap, type Series } from "./data";
 import { cornerLoss, derive, initialState, normalize, type Derived, type State } from "./derive";
-import { FRAGMENT, fmt, lapLabel, lapName, message, PICK_LAPS, setHead, swatch } from "./dom";
+import { FRAGMENT, fmt, lapLabel, lapName, lapTime, message, PICK_LAPS, setHead, swatch } from "./dom";
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -16,14 +28,16 @@ function el<T extends HTMLElement>(id: string): T {
   return e as T;
 }
 
+type Role = "ref" | "cmp";
+
 const ui = {
+  header: el<HTMLElement>("toolbar"),
   course: el<HTMLSelectElement>("course"),
-  courseLabel: el<HTMLLabelElement>("course-label"),
-  showInvalid: el<HTMLInputElement>("show-invalid"),
-  ref: el<HTMLSelectElement>("ref"),
-  cmp: el<HTMLSelectElement>("cmp"),
-  cmpLabel: el<HTMLLabelElement>("cmp-label"),
-  multi: el<HTMLInputElement>("multi"),
+  chips: { ref: el<HTMLButtonElement>("ref-chip"), cmp: el<HTMLButtonElement>("cmp-chip") },
+  pickers: { ref: el<HTMLElement>("ref-picker"), cmp: el<HTMLElement>("cmp-picker") },
+  vs: el<HTMLElement>("vs"),
+  mode: [...document.querySelectorAll<HTMLButtonElement>("#mode button")],
+  selChip: el<HTMLButtonElement>("sel-chip"),
   error: el<HTMLDivElement>("error"),
   attribution: el<HTMLParagraphElement>("attribution"),
   map: el<HTMLDivElement>("map"),
@@ -34,7 +48,10 @@ const ui = {
   dt: el<HTMLDivElement>("dt"),
   gg: el<HTMLDivElement>("gg"),
   tabs: [...document.querySelectorAll<HTMLAnchorElement>(".tabs a")],
+  cornerRow: el<HTMLDivElement>("corner-row"),
   cornerBar: el<HTMLDivElement>("corner-bar"),
+  cornerPrev: el<HTMLButtonElement>("corner-prev"),
+  cornerNext: el<HTMLButtonElement>("corner-next"),
   viewOverview: el<HTMLElement>("view-overview"),
   viewCorner: el<HTMLElement>("view-corner"),
   cornerLegend: el<HTMLDivElement>("c-legend"),
@@ -59,15 +76,37 @@ const ui = {
 
 /** コース図の高さの下限 [px]。これより低い画面ではページごとスクロールする */
 const MAP_MIN_HEIGHT = 500;
+/** コース図の下に空ける幅 [px] */
+const MAP_BOTTOM_GAP = 8;
+
+/**
+ * 線と損失の色の正は TS の定数（charts.ts、sections.ts）。SVG に塗る値と同じ色を CSS（基準の行の背景、
+ * 選んだ区間のチップ、損失の棒と点）でも使えるよう、:root の変数に書く。
+ */
+const COLOR_TOKENS: Record<string, string> = {
+  "--ref": PAIR_COLORS.ref,
+  "--select": SELECT_COLOR,
+  "--loss": LOSS_RAMP[1],
+};
 /** コーナーの拡大図の幅の下限 [px] */
 const CORNER_MAP_MIN_WIDTH = 320;
 
 let courses: string[] = [];
 let doc: CourseData | null = null;
 let state: State | null = null;
-const link = new Link();
+const link = new Link(() => renderSelChip());
 // コーナーのビューのグラフどうしの連動。全体のビューの選択とは分ける
-const cornerLink = new Link();
+const cornerLink = new Link(() => renderSelChip());
+
+/** 今のビューの選択の連動 */
+function activeLink(): Link {
+  return state?.view === "corner" ? cornerLink : link;
+}
+
+/** コーナーのビューの URL の hash。コーナーがなければビューだけ */
+function cornerHash(id: string | null): string {
+  return id ? `#corner/${id}` : "#corner";
+}
 
 /**
  * 状態を変える唯一の入口。基準と比較の周を候補に戻して（normalize）から描き直す。
@@ -115,6 +154,7 @@ async function openCourse(course: string): Promise<void> {
   state = initialState(next, { ...keep, ...route(next, null) });
   renderAttribution(next);
   link.select(null);
+  cornerLink.select(null);
   rerender();
 }
 
@@ -130,21 +170,18 @@ function renderAttribution(doc: CourseData): void {
   ui.attribution.replaceChildren("コースの端：", a);
 }
 
-/** 操作欄（select、チェックボックス、タブ、コーナーのボタン、周の一覧）を state から書く */
+/** 操作欄（ツールバー、周を選ぶポップオーバー、コーナーのチップ、周の一覧）を state から書く */
 function renderToolbar(state: State, doc: CourseData, d: Derived): void {
   ui.course.value = doc.course;
-  ui.courseLabel.hidden = courses.length <= 1;
-  ui.ref.replaceChildren(
-    new Option("（選ぶ）", "", false, d.ref == null),
-    ...d.refCandidates.map((l) => new Option(lapLabel(l), l.label, false, l === d.ref)),
-  );
-  ui.cmp.replaceChildren(
-    new Option("（なし）", "", false, d.cmp == null),
-    ...d.cmpCandidates.map((l) => new Option(lapLabel(l), l.label, false, l === d.cmp)),
-  );
-  ui.cmpLabel.hidden = state.multi;
-  ui.multi.checked = state.multi;
-  ui.showInvalid.checked = state.showInvalid;
+  ui.course.hidden = courses.length <= 1;
+  renderChip("ref", d.ref, d);
+  renderChip("cmp", d.cmp, d);
+  ui.chips.cmp.hidden = state.multi;
+  ui.vs.hidden = state.multi;
+  renderPicker("ref", [null, ...d.refCandidates], d.ref, state);
+  renderPicker("cmp", [null, ...d.cmpCandidates], d.cmp, state);
+  for (const b of ui.mode) b.setAttribute("aria-pressed", String(b.dataset.multi === String(state.multi)));
+  renderSelChip();
 
   ui.viewOverview.hidden = state.view !== "overview";
   ui.viewCorner.hidden = state.view !== "corner";
@@ -152,10 +189,79 @@ function renderToolbar(state: State, doc: CourseData, d: Derived): void {
     if (a.dataset.view === state.view) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
     // コーナーのタブは、今選んでいるコーナーを開く
-    if (a.dataset.view === "corner" && state.corner) a.href = `#corner/${state.corner}`;
+    if (a.dataset.view === "corner") a.href = cornerHash(state.corner);
   }
+  ui.cornerRow.hidden = state.view !== "corner" || cornersOf(doc).length === 0;
   renderCornerBar(state, doc, d);
   renderTable(state, d);
+}
+
+const PICK_ROLE: Record<Role, { name: string; none: string; empty: string }> = {
+  ref: { name: "基準ラップ", none: "（選ぶ）", empty: "基準を選ぶ" },
+  cmp: { name: "比較", none: "（なし）", empty: "比較なし" },
+};
+
+/** 基準・比較のチップ：周の色の点、短い名前、タイム。周がなければ点線の枠 */
+function renderChip(kind: Role, lap: Lap | null, d: Derived): void {
+  const chip = ui.chips[kind];
+  const role = PICK_ROLE[kind];
+  chip.classList.toggle("ghost", lap == null);
+  if (!lap) {
+    chip.title = role.name;
+    chip.replaceChildren(role.empty);
+    return;
+  }
+  chip.title = `${role.name}：${lap.label}`;
+  const dot = document.createElement("span");
+  dot.className = "dot";
+  dot.style.background = d.style(lap).stroke;
+  const time = document.createElement("small");
+  time.textContent = lapTime(lap);
+  chip.replaceChildren(dot, lapLabel(lap), time);
+}
+
+/** 周を選ぶポップオーバーの中身。押すとその周にして閉じる。無効な周も出すかの切り替えはここに置く */
+function renderPicker(kind: Role, laps: (Lap | null)[], current: Lap | null, state: State): void {
+  const picker = ui.pickers[kind];
+  for (const box of picker.querySelectorAll<HTMLInputElement>(".show-invalid")) box.checked = state.showInvalid;
+  const list = picker.querySelector(".pick-list");
+  if (!list) throw new Error(`#${picker.id} に .pick-list がない`);
+  list.replaceChildren(
+    ...laps.map((lap) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "option");
+      b.setAttribute("aria-selected", String(lap === current));
+      if (lap) {
+        if (!lap.lap_valid) b.className = "invalid";
+        b.title = lap.label;
+        const time = document.createElement("small");
+        time.textContent = lapTime(lap);
+        b.append(lapLabel(lap), time);
+      } else {
+        b.append(PICK_ROLE[kind].none);
+      }
+      b.addEventListener("click", () => {
+        picker.hidePopover();
+        update({ [kind]: lap?.label ?? null });
+      });
+      return b;
+    }),
+  );
+}
+
+/** 選んだ区間のチップ。今のビューで区間を選んでいるときだけ出し、押すと解除する */
+function renderSelChip(): void {
+  const sel = activeLink().selection;
+  ui.selChip.hidden = sel == null;
+  if (!sel) return;
+  const [a, b] = [...sel.range].sort((x, y) => x - y).map(Math.round);
+  ui.selChip.textContent = `s ${a}–${b} m ✕`;
+}
+
+/** ツールバーの高さを CSS（貼り付ける列の top）に渡す。折り返しやチップの出し入れで変わる */
+function syncHeaderHeight(): void {
+  document.documentElement.style.setProperty("--header-h", `${ui.header.offsetHeight}px`);
 }
 
 /** 重ねる周の凡例（線の見本と周の名前）。全体とコーナーの両方のビューで使う */
@@ -165,10 +271,12 @@ function renderLegend(target: HTMLElement, d: Derived): void {
 
 function renderCharts(state: State, doc: CourseData, d: Derived): void {
   const { overlaid, style } = d;
-  // 図を画面の高さに合わせる。見出しや操作の下から始まるので、その分を引き、開いた時点で図の全体が見えるようにする
-  const mapHost = state.view === "corner" ? ui.corner.map : ui.map;
-  const mapTop = mapHost.getBoundingClientRect().top + window.scrollY;
-  const mapHeight = Math.max(MAP_MIN_HEIGHT, window.innerHeight - mapTop - 8);
+  // 図を画面の高さに合わせる。図の列はツールバーの下に貼り付く（CSS の top）ので、その分を引く
+  syncHeaderHeight();
+  const mapCol = (state.view === "corner" ? ui.corner.map : ui.map).parentElement!;
+  const stickyTop = parseFloat(getComputedStyle(mapCol).top);
+  if (!Number.isFinite(stickyTop)) throw new Error("図の列の top が px でない（style.css の sticky を確かめる）");
+  const mapHeight = Math.max(MAP_MIN_HEIGHT, window.innerHeight - stickyTop - MAP_BOTTOM_GAP);
 
   if (state.view === "corner") {
     ui.panel.root.hidden = true;
@@ -267,32 +375,80 @@ function route(doc: CourseData, prev: string | null): Pick<State, "view" | "corn
 }
 
 /**
- * コーナーの記号のボタン（コーナーのビューだけ）。押すとそのコーナーの URL に移る。
- * 2 周で比べるときは、比較の周の損失（自己ベストとの差）を添える。`min_diff_s` 未満は灰色
+ * コーナーのチップ（コーナーのビューのツールバーの 2 段目）。押すとそのコーナーの URL に移る。
+ * 2 周で比べるときは、比較の周の損失（自己ベストとの差）を点の濃さと値で添える。`min_diff_s` 未満は薄く
  */
 function renderCornerBar(state: State, doc: CourseData, d: Derived): void {
+  const corners = cornersOf(doc);
+  const losses = new Map(corners.map((c) => [c.id, cornerLoss(d.losses, c.id)]));
+  const maxLoss = Math.max(doc.min_diff_s, ...[...losses.values()].map((v) => v ?? 0));
   ui.cornerBar.replaceChildren(
-    ...cornersOf(doc).map((c) => {
+    ...corners.map((c) => {
       const b = document.createElement("button");
       b.type = "button";
+      b.className = "corner";
       b.setAttribute("aria-pressed", String(c.id === state.corner));
-      const loss = cornerLoss(d.losses, c.id);
+      const loss = losses.get(c.id) ?? null;
       const titles = [`${c.name}（s = ${c.s_start}〜${c.s_end} m）`];
-      b.append(c.id);
       if (loss != null && d.losses) {
+        const dot = document.createElement("span");
+        dot.className = "dot";
+        dot.style.setProperty("--l", String(Math.max(0, loss) / maxLoss));
         const v = document.createElement("span");
         v.className = loss < doc.min_diff_s ? "loss small" : "loss";
         v.textContent = fmt(loss, 2, true);
-        b.append(" ", v);
+        b.append(dot, c.id, v);
         titles.push(`自己ベストとの差 ${fmt(loss, 3, true)} s（${lapLabel(d.losses.lap)}）`);
+      } else {
+        b.append(c.id);
       }
       b.title = titles.join("　");
       b.addEventListener("click", () => {
-        window.location.hash = `corner/${c.id}`;
+        window.location.hash = cornerHash(c.id);
       });
       return b;
     }),
   );
+}
+
+/** 前後のコーナーへ移る。端では反対の端へ回る（周回のコースなので） */
+function stepCorner(step: 1 | -1): void {
+  if (!doc || !state) return;
+  const ids = cornersOf(doc).map((c) => c.id);
+  if (ids.length === 0) return;
+  const i = state.corner == null ? -1 : ids.indexOf(state.corner);
+  window.location.hash = cornerHash(ids[(i + step + ids.length) % ids.length]!);
+}
+
+/** キー操作を受けないとき：入力の部品にフォーカスがある、修飾キー付き、周を選ぶポップオーバーが開いている */
+function ignoreKey(e: KeyboardEvent): boolean {
+  const t = e.target;
+  const typing = t instanceof Element && t.closest("input, select, textarea, [contenteditable]") != null;
+  return typing || e.metaKey || e.ctrlKey || e.altKey || document.querySelector(":popover-open") != null;
+}
+
+/** キー操作：1 / 2 でビュー、← / → でコーナー（コーナーのビュー）、Esc で選択を解除 */
+function onKey(e: KeyboardEvent): void {
+  if (ignoreKey(e) || !state) return;
+  if (e.key === "Escape") {
+    link.select(null);
+    cornerLink.select(null);
+  } else if (e.key === "1") {
+    window.location.hash = "#overview";
+  } else if (e.key === "2") {
+    window.location.hash = cornerHash(state.corner);
+  } else if (state.view === "corner" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    e.preventDefault();
+    stepCorner(e.key === "ArrowLeft" ? -1 : 1);
+  }
+}
+
+/** ポップオーバーをチップの下に、右端をそろえて出す */
+function placePicker(kind: Role): void {
+  const r = ui.chips[kind].getBoundingClientRect();
+  const p = ui.pickers[kind];
+  p.style.top = `${r.bottom + 6}px`;
+  p.style.right = `${document.documentElement.clientWidth - r.right}px`;
 }
 
 function renderTable(state: State, d: Derived): void {
@@ -363,6 +519,7 @@ function renderReadout(s: number | null, laps: Lap[], style: (lap: Lap) => LapSt
 async function main(): Promise<void> {
   courses = await loadIndex();
   if (courses.length === 0) throw new Error("data/index.json にコースがない。npm run data で書き出す");
+  for (const [k, v] of Object.entries(COLOR_TOKENS)) document.documentElement.style.setProperty(k, v);
   ui.course.replaceChildren(...courses.map((c) => new Option(c, c)));
   ui.course.addEventListener("change", () =>
     openCourse(ui.course.value).catch((e) => {
@@ -371,19 +528,26 @@ async function main(): Promise<void> {
       showError(e);
     }),
   );
-  ui.showInvalid.addEventListener("change", () => update({ showInvalid: ui.showInvalid.checked }));
-  ui.cmp.addEventListener("change", () => update({ cmp: ui.cmp.value || null }));
-  ui.multi.addEventListener("change", () => update({ multi: ui.multi.checked }));
-  ui.ref.addEventListener("change", () => update({ ref: ui.ref.value || null }));
-  // 区間の選択はグラフのクリックかダブルクリックで解除する。Esc でも解除できるようにする
-  window.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    link.select(null);
-    cornerLink.select(null);
-  });
+  for (const kind of ["ref", "cmp"] as const) {
+    const picker = ui.pickers[kind];
+    picker.addEventListener("beforetoggle", (e) => {
+      if ((e as ToggleEvent).newState === "open") placePicker(kind);
+    });
+    for (const box of picker.querySelectorAll<HTMLInputElement>(".show-invalid")) {
+      box.addEventListener("change", () => update({ showInvalid: box.checked }));
+    }
+  }
+  for (const b of ui.mode) b.addEventListener("click", () => update({ multi: b.dataset.multi === "true" }));
+  ui.selChip.addEventListener("click", () => activeLink().select(null));
+  ui.cornerPrev.addEventListener("click", () => stepCorner(-1));
+  ui.cornerNext.addEventListener("click", () => stepCorner(1));
+  // 区間の選択はグラフのクリックかダブルクリックでも解除できる
+  window.addEventListener("keydown", onKey);
   window.addEventListener("hashchange", () => {
     if (doc && state) update(route(doc, state.corner));
   });
+  // 選んだ区間のチップが出て折り返したときなど、描き直しなしでツールバーの高さが変わったときに追う
+  new ResizeObserver(syncHeaderHeight).observe(ui.header);
   // コース図の高さを画面に合わせ直す。リサイズ中に何度も描き直さないよう、止まってから描く
   let resizeTimer: number | undefined;
   window.addEventListener("resize", () => {

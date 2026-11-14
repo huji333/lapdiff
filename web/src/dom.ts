@@ -58,6 +58,11 @@ export function lapLabel(lap: Lap): string {
   return `${src} ${t.getMonth() + 1}/${t.getDate()} ${pad(t.getHours())}:${pad(t.getMinutes())} #${lap.lap}`;
 }
 
+/** 周のタイム [s] の表示。complete でない周は FRAGMENT */
+export function lapTime(lap: Lap): string {
+  return lap.complete ? fmt(lap.t_end, 3) : FRAGMENT;
+}
+
 /** 線の見本と短い名前を並べた周の名前。元の label は title に出す */
 export function lapName(lap: Lap, style: LapStyle): HTMLSpanElement {
   const span = document.createElement("span");

@@ -4,34 +4,329 @@
   display: none !important;
 }
 
+/* 色と形の値。ライトだけ。
+   周の線と損失の色（--ref、--cmp、--select、--loss-0、--loss）はここに書かない。
+   正は charts.ts と sections.ts の定数で、main.ts が起動時に :root へ書く。
+   --header-h は sticky のツールバーの高さで、main.ts が測って書く */
 :root {
   color-scheme: light;
-  --fg: #222;
-  --muted: #666;
-  --line: #ddd;
-  --ref-bg: #fff4d6;
+  --bg: #fafafa;
+  --surface: #fff;
+  --surface-2: #ececee;
+  --fg: #1d1d1f;
+  --muted: #6e6e73;
+  --line: #e2e2e5;
+  --line-strong: #d0d0d4;
+  --accent: #0a66d8;
+  --accent-soft: #e6f0fc;
   --error: #b00020;
+  --ref-bg: color-mix(in srgb, var(--ref) 10%, var(--surface));
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.12);
+  --shadow: 0 1px 3px rgb(0 0 0 / 0.06), 0 4px 12px rgb(0 0 0 / 0.05);
+  --control-h: 28px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --header-h: 0px;
   font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
   color: var(--fg);
 }
 
 body {
+  margin: 0;
+  background: var(--bg);
+}
+
+.page {
   margin: 0 auto;
   padding: 16px;
   max-width: 1600px;
-  background: #fff;
 }
 
 h2 {
   font-size: 1.1rem;
 }
 
-.controls {
+a {
+  color: var(--accent);
+}
+
+/* Plot の軸の文字もページと同じ書体にする（Plot は svg に font-family を属性で書く） */
+svg[class*="plot-"],
+figure[class*="plot-"] {
+  font-family: inherit;
+}
+
+/* フォームの部品：高さ、角丸、枠をそろえる */
+button,
+select {
+  font: inherit;
+  height: var(--control-h);
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    background-color 0.12s,
+    color 0.12s;
+}
+
+button:hover,
+select:hover {
+  border-color: var(--muted);
+}
+
+select {
+  appearance: none;
+  padding-right: 24px;
+  background: var(--surface)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5'/%3E%3C/svg%3E")
+    no-repeat right 8px center;
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+:where(a, button, select, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
+
+/* sticky の 1 段ツールバー。コーナーのビューでは 2 段目にコーナーのチップを並べる */
+#toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+
+#toolbar .bar,
+#toolbar .sub {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 20px;
   align-items: center;
+  gap: 8px 16px;
+  padding: 8px 16px;
+}
+
+#toolbar .sub {
+  gap: 6px;
+  padding-top: 0;
+}
+
+h1 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* セグメント（ビューのタブと表示の切り替え） */
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-2);
+  border-radius: 8px;
+}
+
+.seg > a,
+.seg > button {
+  display: inline-flex;
+  align-items: center;
+  height: calc(var(--control-h) - 4px);
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.seg > a:hover,
+.seg > button:hover {
+  color: var(--fg);
+}
+
+.seg > [aria-current="page"],
+.seg > [aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 基準 vs 比較のチップ。押すと周を選ぶポップオーバーを開く */
+.pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 8px;
+  border-radius: 999px;
+}
+
+.chip .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.chip small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chip.ghost {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+/* 選んだ区間。グラフの強調と同じ色 */
+.chip.sel {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--select) 12%, var(--surface));
+  color: var(--select);
+}
+
+/* 周を選ぶポップオーバー。位置は main.ts がチップの下に合わせる */
+.picker {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 6px;
+  width: max-content;
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow);
+}
+
+.pick-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  color: var(--muted);
+}
+
+.pick-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.pick-list button {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.pick-list button:hover {
+  background: var(--surface-2);
+}
+
+.pick-list button[aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.pick-list button.invalid {
+  color: var(--muted);
+}
+
+.pick-list small {
+  color: var(--muted);
+}
+
+/* 2 段目：コーナーのチップ（タブと違う形にして階層を分ける） */
+.corners {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.corner {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border-color: var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.corner:hover {
+  border-color: var(--line-strong);
+}
+
+.corner[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* 損失の点。濃さ（--l）はコーナーの中で最大の損失に対する比 */
+.corner .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--loss);
+  opacity: var(--l, 0);
+}
+
+/* コーナーのチップに添える損失（自己ベストとの差）。min_diff_s 未満は薄く */
+.corner .loss {
+  font-size: 11px;
+}
+
+.corner .loss.small {
+  opacity: 0.55;
+}
+
+.nav {
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.nav:hover {
+  color: var(--fg);
 }
 
 .note,
@@ -42,14 +337,17 @@ h2 {
 #error {
   color: var(--error);
   border: 1px solid var(--error);
+  border-radius: var(--radius);
   padding: 8px;
+  margin-bottom: 8px;
   white-space: pre-wrap;
 }
 
-/* 左：コース図を画面の高さいっぱいに描き、右をスクロールしても見えたままにする。
+/* 左：コース図を画面の高さいっぱいに描き、右をスクロールしても見えたままにする（ツールバーの下に貼り付ける）。
    右：速度・Δt（全長）と、その下に G-G 図とカーソルの値 */
 main {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   align-items: flex-start;
 }
@@ -57,7 +355,7 @@ main {
 .map-col {
   flex: 0 0 auto;
   position: sticky;
-  top: 0;
+  top: calc(var(--header-h) + 8px);
 }
 
 .dist-col {
@@ -79,7 +377,7 @@ main {
   flex: 1 1 420px;
   min-width: 0;
   position: sticky;
-  top: 0;
+  top: calc(var(--header-h) + 8px);
 }
 
 #view-corner {
@@ -102,47 +400,6 @@ main {
 
 #c-title {
   margin: 0;
-}
-
-main {
-  flex-wrap: wrap;
-}
-
-.tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.tabs a {
-  padding: 4px 12px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  color: var(--fg);
-  text-decoration: none;
-}
-
-.tabs a[aria-current="page"],
-.corner-bar button[aria-pressed="true"] {
-  background: #222;
-  color: #fff;
-}
-
-.corner-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 8px;
-}
-
-/* コーナーのボタンに添える損失（自己ベストとの差）。min_diff_s 未満は灰色 */
-.corner-bar .loss {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.corner-bar .loss.small {
-  opacity: 0.55;
 }
 
 .legend {
@@ -171,7 +428,8 @@ main {
   align-items: center;
   gap: 4px;
   padding: 2px 6px;
-  background: rgb(255 255 255 / 0.85);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
   font-size: 11px;
   color: var(--muted);
 }
@@ -180,18 +438,17 @@ main {
   display: inline-block;
   width: 60px;
   height: 8px;
+  border-radius: 2px;
 }
 
 #readout {
   font-size: 12px;
-  font-variant-numeric: tabular-nums;
   min-height: 1em;
 }
 
 #laps,
 .stats {
   border-collapse: collapse;
-  font-variant-numeric: tabular-nums;
 }
 
 #laps th,
@@ -203,14 +460,40 @@ main {
   text-align: left;
 }
 
+#laps th,
+.stats th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
 #laps tr.ref,
 .stats tr.ref {
   background: var(--ref-bg);
 }
 
+/* 周の一覧はページの最下部に、控えめに出す */
+.laps-section {
+  margin-top: 24px;
+  font-size: 12px;
+}
+
+#laps button {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
 /* lap_valid でない周 */
 #laps tr.invalid {
   color: var(--muted);
+}
+
+/* パネル（区間ごとの損失） */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
 }
 
 /* 区間ごとの損失のパネル（sections.ts）。全体のビューの右の列に置き、距離のグラフを隠さない。
@@ -233,9 +516,6 @@ main {
   display: flex;
   flex-direction: column;
   max-height: 40vh;
-  background: #fff;
-  border: 1px solid #bbb;
-  border-radius: 6px;
   font-size: 12px;
 }
 
@@ -254,8 +534,8 @@ main {
     order: 2;
     flex: 0 0 320px;
     position: sticky;
-    top: 8px;
-    max-height: calc(100vh - 16px);
+    top: calc(var(--header-h) + 8px);
+    max-height: calc(100vh - var(--header-h) - 16px);
   }
 
   .loss-panel .sp-list {
@@ -268,11 +548,28 @@ main {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  background: #f2f2f2;
+  padding: 6px 8px 6px 12px;
   border-bottom: 1px solid var(--line);
-  border-radius: 6px 6px 0 0;
-  font-weight: bold;
+  font-weight: 600;
+}
+
+.loss-panel.collapsed .fp-head {
+  border-bottom: 0;
+}
+
+.chev {
+  height: 24px;
+  width: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  transition: transform 0.15s;
+}
+
+.loss-panel.collapsed .chev {
+  transform: rotate(-90deg);
 }
 
 .loss-panel.collapsed .fp-body {
@@ -281,12 +578,11 @@ main {
 
 .fp-body {
   overflow-y: auto;
-  padding: 6px 8px;
+  padding: 6px 12px;
 }
 
 .sp-summary {
   margin: 0 0 6px;
-  font-variant-numeric: tabular-nums;
 }
 
 .sp-list {
@@ -301,12 +597,12 @@ main {
   align-items: center;
   gap: 6px;
   padding: 2px 0;
+  border-radius: 4px;
   cursor: pointer;
-  font-variant-numeric: tabular-nums;
 }
 
 .sp-row:hover {
-  background: #f6f6f6;
+  background: var(--surface-2);
 }
 
 .sp-row.straight .sp-name {
@@ -315,17 +611,19 @@ main {
 
 .sp-bar {
   height: 10px;
-  background: #f0f0f0;
+  border-radius: 2px;
+  background: var(--surface-2);
 }
 
 .sp-bar > span {
   display: block;
   height: 100%;
-  background: #b2182b;
+  border-radius: 2px;
+  background: var(--loss);
 }
 
 .sp-row.small .sp-bar > span {
-  background: #bbb;
+  background: var(--line-strong);
 }
 
 .sp-row.small .sp-val {

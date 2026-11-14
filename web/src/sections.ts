@@ -103,7 +103,8 @@ function saveCollapsed(collapsed: boolean): void {
 export function setupPanel(panel: HTMLElement, toggle: HTMLButtonElement): void {
   const setCollapsed = (c: boolean) => {
     panel.classList.toggle("collapsed", c);
-    toggle.textContent = c ? "開く" : "たたむ";
+    toggle.title = c ? "開く" : "たたむ";
+    toggle.setAttribute("aria-label", toggle.title);
     toggle.setAttribute("aria-expanded", String(!c));
   };
   setCollapsed(loadCollapsed());

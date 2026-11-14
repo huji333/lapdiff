@@ -3,7 +3,7 @@
 //
 // - 距離のグラフで横にドラッグ：その s の範囲を、コース図では基準線に沿った線で、ほかの距離のグラフでは帯で示す（SELECT_COLOR）。
 // - コース図で矩形をドラッグ：基準線の点のうち矩形の中にある点の s の最小〜最大を、距離のグラフに帯で示す。
-// - クリック・ダブルクリック・Esc（main.ts）で解除する。
+// - クリック・ダブルクリック、Esc とツールバーの選択のチップ（main.ts）で解除する。
 // - 距離のグラフの上でカーソルを動かすと、その s に縦線を引き、コース図と G-G 図に各周の位置を点で示す。
 
 import * as d3 from "d3";
@@ -25,10 +25,15 @@ interface Listener {
   onHover: (s: number | null) => void;
 }
 
-/** グラフどうしで選択とカーソルの位置を共有する。 */
+/**
+ * グラフどうしで選択とカーソルの位置を共有する。
+ * `onChange` は選択が変わるたびに呼ぶ。描き直し（reset）でも外れないので、グラフの外（ツールバーの選択のチップ）が使う。
+ */
 export class Link {
   private sel: Selection | null = null;
   private listeners: Listener[] = [];
+
+  constructor(private readonly onChange: (sel: Selection | null) => void = () => {}) {}
 
   get selection(): Selection | null {
     return this.sel;
@@ -48,6 +53,7 @@ export class Link {
   select(sel: Selection | null): void {
     this.sel = sel;
     for (const l of this.listeners) l.onSelect(sel);
+    this.onChange(sel);
   }
 
   hover(s: number | null): void {
