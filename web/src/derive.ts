@@ -124,7 +124,7 @@ export interface Derived {
   /** 一覧に出す周の、基準ラップとのタイム差。基準がなければ空 */
   dts: Map<string, Series>;
   losses: Losses | null;
-  /** state.corner のコーナーの表。コーナーがなければ null */
+  /** state.corner のコーナーの表。行は重ねる周（基準ラップを重ねていなければ先頭に足す）。コーナーがなければ null */
   corner: CornerTable | null;
 }
 
@@ -204,7 +204,10 @@ export function derive(state: State, doc: CourseData): Derived {
     style,
     dts,
     losses,
-    corner: hasCorner ? cornerTable(doc, overlaid, ref, state.corner!) : null,
+    // 差の元になる値が表のどこかに出るよう、重ねていない基準ラップも表の先頭の行に入れる
+    corner: hasCorner
+      ? cornerTable(doc, ref && !overlaid.includes(ref) ? [ref, ...overlaid] : overlaid, ref, state.corner!)
+      : null,
   };
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import contract from "./fixtures/contract.json";
+import { PAIR_COLORS } from "./charts";
 import type { CourseData } from "./data";
 import { cornerLoss, derive, initialState, normalize, type State } from "./derive";
 import { lapLabel } from "./dom";
@@ -96,6 +97,16 @@ describe("derive", () => {
     expect(row!.diff!.s_brake).toBeNull();
   });
 
+  it("重ねる周に基準がなくても、表の先頭に基準の行を出す", () => {
+    const d = derive({ ...base, multi: true, selected: new Set([RC1]) }, doc);
+    expect(labels(d.overlaid)).toEqual([RC1]);
+    const [refRow, row] = d.corner!.rows;
+    expect(refRow!.lap.label).toBe(RC2);
+    expect(refRow!.diff).toBeNull();
+    expect(row!.lap.label).toBe(RC1);
+    expect(row!.diff!.t).toBeCloseTo(2.5 - 2.271, 9);
+  });
+
   it("コースにないコーナーなら表は null", () => {
     expect(derive({ ...base, corner: "T9" }, doc).corner).toBeNull();
   });
@@ -103,7 +114,8 @@ describe("derive", () => {
   it("2 周で比べるときの色は基準が青、比較が橙", () => {
     const d = derive(base, doc);
     const [ref, cmp] = d.overlaid;
-    expect(d.style(ref!).stroke).not.toBe(d.style(cmp!).stroke);
+    expect(d.style(ref!).stroke).toBe(PAIR_COLORS.ref);
+    expect(d.style(cmp!).stroke).toBe(PAIR_COLORS.cmp);
     expect(d.style(ref!).strokeWidth).toBeGreaterThan(d.style(cmp!).strokeWidth);
   });
 });

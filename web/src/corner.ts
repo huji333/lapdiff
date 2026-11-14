@@ -181,9 +181,7 @@ function renderTable(
     (real ? `実車はしきい値を 0.1 G 変えると 30 m 以上動くコーナーがある。` : "");
   const heads: Head[] = COLS.map(({ key, text, sign }) => {
     const diff = diffCol(key);
-    const h: Head = {
-      text: key === "t" && diff ? "基準との差 [s]" : key === "s_brake" && real ? "ブレーキ~ [m]" : text,
-    };
+    const h: Head = { text: key === "s_brake" && real ? "ブレーキ~ [m]" : text };
     const titles = [key === "s_brake" ? brakeDef : "", diff ? `基準の行は値、ほかは基準との差（${sign}）` : ""];
     if (titles.some(Boolean)) h.title = titles.join("");
     return h;
