@@ -89,3 +89,94 @@ def test_tile_xy():
     # 経度 0・緯度 0 はズーム 1 でタイルの境（1, 1）
     tx, ty = edges.tile_xy(0.0, 0.0, zoom=1)
     assert (float(tx), float(ty)) == pytest.approx((1.0, 1.0))
+
+
+# --- 白線と縁石 ---
+# 色は okayama の写真から取った値（T5 の縁石の赤は薄い）
+KERB_RED = (200, 187, 184)  # R - G = 13、R - B = 16
+LINE_WHITE = (232, 226, 228)
+RUNOFF = (214, 211, 205)  # 舗装した退避帯（T1・T5 の外）。明るく、色がほとんどない
+DUSTY = (150, 150, 154)  # くすんだアスファルト・白線のぼけた縁
+
+
+def masks(spans):
+    return edges.paint_masks(profile(spans))
+
+
+def test_paint_masks_classes():
+    white, red, grey = edges.paint_masks(np.array([KERB_RED, LINE_WHITE, RUNOFF, DUSTY, GRASS, ASPHALT, (171, 166, 146)]))
+    np.testing.assert_array_equal(red, [True, False, False, False, False, False, False])
+    np.testing.assert_array_equal(white, [False, True, True, False, False, False, False])
+    # 黄みの土（R - B = 25）は白にも灰色にもしない
+    np.testing.assert_array_equal(grey, [False, False, False, True, False, True, False])
+
+
+def test_rim_white_line_only():
+    # アスファルトの端 5 m、白線 5.25〜5.5 m、外は芝。路面の端は白線の外側
+    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE)])
+    assert edges.rim(w, r, g, OFFS, 5.0, 1) == (5.5, pytest.approx(math.nan, nan_ok=True))
+    # 右へも同じ（右の端は負の位置）
+    w, r, g = masks([(-5, 5, ASPHALT), (-5.5, -5.25, LINE_WHITE)])
+    line, kerb = edges.rim(w, r, g, OFFS, -5.0, -1)
+    assert line == -5.5 and math.isnan(kerb)
+
+
+def test_rim_line_capped_on_white_runoff():
+    # 白線の外に白い舗装が続いても、路面に含めるのは白の並びの始まりから LINE_MAX まで
+    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 9, RUNOFF)])
+    line, kerb = edges.rim(w, r, g, OFFS, 5.0, 1)
+    assert line == pytest.approx(5.25 + edges.LINE_MAX) and math.isnan(kerb)
+
+
+def test_rim_crosses_grey_to_reach_line():
+    # アスファルトの外側 1 m がくすんだ灰色でも、その先の白線まで読む
+    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 6.25, DUSTY), (6.5, 6.75, LINE_WHITE)])
+    assert edges.rim(w, r, g, OFFS, 5.0, 1)[0] == 6.75
+    # LINE_SEARCH より遠い白は白線とみなさない
+    far = 5 + edges.LINE_SEARCH + 0.5
+    w, r, g = masks([(-5, 5, ASPHALT), (5.25, far - 0.25, DUSTY), (far, far + 0.25, LINE_WHITE)])
+    assert edges.rim(w, r, g, OFFS, 5.0, 1)[0] == 5.0
+
+
+def test_rim_kerb_outside_line():
+    # 白線 0.5 m、赤い縁石 1.5 m、その外は白い退避帯。縁石の外の線は最も外の赤
+    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE), (5.75, 7.25, KERB_RED), (7.5, 10, RUNOFF)])
+    assert edges.rim(w, r, g, OFFS, 5.0, 1) == (5.5, 7.25)
+
+
+def test_rim_kerb_limits():
+    # 芝で切れた先の赤（看板など）は縁石にしない
+    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE), (7, 7.5, KERB_RED)])
+    assert math.isnan(edges.rim(w, r, g, OFFS, 5.0, 1)[1])
+    # 白線の外から KERB_MAX を超える赤は数えない
+    w, r, g = masks([(-5, 5, ASPHALT), (5.25, 5.5, LINE_WHITE), (5.75, 9, KERB_RED)])
+    assert edges.rim(w, r, g, OFFS, 5.0, 1)[1] == pytest.approx(5.5 + edges.KERB_MAX)
+    # アスファルトの端が取れていなければ何も読まない
+    line, kerb = edges.rim(w, r, g, OFFS, math.nan, 1)
+    assert math.isnan(line) and math.isnan(kerb)
+
+
+def test_kerb_widths_fills_stripes_and_drops_strays():
+    n = 100
+    paved = np.full(n, 5.0)
+    kerb = np.full(n, np.nan)
+    # 縁石 40〜55：白い縞で 1 点おきに赤が抜ける
+    kerb[40:56:2] = 6.5
+    # はぐれた赤 1 点
+    kerb[80] = 7.0
+    w = edges.kerb_widths(paved, kerb)
+    assert w[80] == 0.0 and w[70] == 0.0
+    np.testing.assert_allclose(w[42:54], 1.5)
+    # 縁石は前後に KERB_WIN 点より広く伸びない
+    assert w[40 - edges.KERB_WIN - 1] == 0.0 and w[55 + edges.KERB_WIN + 1] == 0.0
+
+
+def test_kerb_widths_wraps_and_clips():
+    n = 50
+    paved = np.full(n, 5.0)
+    kerb = np.full(n, np.nan)
+    kerb[[0, 1, 48, 49]] = 6.0  # s = 0 をまたぐ縁石
+    kerb[20:25] = 4.0  # 路面の端より内側の赤は幅 0
+    w = edges.kerb_widths(paved, kerb)
+    assert w[0] == 1.0 and w[49] == 1.0
+    np.testing.assert_allclose(w[20:25], 0.0)

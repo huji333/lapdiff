@@ -11,6 +11,7 @@ import {
   type Corner,
   type CourseData,
   type Edges,
+  type Kerb,
   type Lap,
   type Range,
   type Series,
@@ -93,9 +94,21 @@ export interface Paint {
   color: (string | null)[];
 }
 const EDGE_STROKE = "#a8a8a8";
+/** 縁石の帯。赤い面に白い破線の縁を付け、紅白の縁石に見せる */
+const KERB_FILL = "#d9534f";
+const KERB_STROKE = "white";
 const REFLINE_STROKE = "#c4c4c4";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
+
+/**
+ * 縁石の多角形のうち、基準線の格子の添字が [lo, hi] の点。進む側と戻る側を同じ範囲で切るので、残りも閉じた帯になる。
+ * 範囲に 2 点未満しか残らなければ null
+ */
+export function kerbInRange(kerb: Kerb, lo: number, hi: number): [number, number][] | null {
+  const pts = kerb.i.flatMap((i, k) => (i >= lo && i <= hi ? [[kerb.x[k]!, kerb.y[k]!] as [number, number]] : []));
+  return pts.length >= 4 ? pts : null;
+}
 
 /**
  * コースの路面（左右の端の間を薄く塗った面）と端の細い線。周の線より先に（下に）置く。
@@ -124,7 +137,37 @@ function roadMarks(edges: Edges | null, idx: number[] | null): Plot.Markish[] {
     const closed = idx == null ? [...pts, pts[0]!] : pts;
     return Plot.line(closed, { x: (d) => d[0], y: (d) => d[1], stroke: EDGE_STROKE, strokeWidth: 1 });
   };
-  return [fill, edgeLine(pick(left)), edgeLine(pick(right))];
+  return [fill, ...kerbMarks(edges.kerbs, idx), edgeLine(pick(left)), edgeLine(pick(right))];
+}
+
+/**
+ * 縁石の帯（拡大図だけ）。全体の図では縁石（幅 2 m 前後）が 1 px に満たず読めないので描かない
+ */
+function kerbMarks(kerbs: Kerb[], idx: number[] | null): Plot.Markish[] {
+  if (idx == null || idx.length === 0) return [];
+  const lo = idx[0]!;
+  const hi = idx[idx.length - 1]!;
+  const rings = kerbs.flatMap((k) => {
+    const r = kerbInRange(k, lo, hi);
+    return r ? [r] : [];
+  });
+  if (rings.length === 0) return [];
+  const render: Plot.RenderFunction = (_index, scales) => {
+    const fx = scales.x!;
+    const fy = scales.y!;
+    const g = document.createElementNS(SVG_NS, "g");
+    for (const pts of rings) {
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", "M" + pts.map(([x, y]) => `${fx(x)},${fy(y)}`).join("L") + "Z");
+      path.setAttribute("fill", KERB_FILL);
+      path.setAttribute("stroke", KERB_STROKE);
+      path.setAttribute("stroke-width", "1");
+      path.setAttribute("stroke-dasharray", "4,4");
+      g.appendChild(path);
+    }
+    return g;
+  };
+  return [render];
 }
 
 /**
@@ -429,6 +472,12 @@ export function cornerMap(
       for (const i of idx) {
         xs.push(side.x[i]!);
         ys.push(side.y[i]!);
+      }
+    }
+    for (const k of doc.edges.kerbs) {
+      for (const [x, y] of kerbInRange(k, idx[0] ?? 0, idx[idx.length - 1] ?? -1) ?? []) {
+        xs.push(x);
+        ys.push(y);
       }
     }
   }

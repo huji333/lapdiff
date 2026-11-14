@@ -155,9 +155,18 @@ describe("checkCourse", () => {
 
   it("コースの端の長さが基準線と違えば失敗させる", () => {
     const e = (n: number) => ({ x: Array(n).fill(0), y: Array(n).fill(0) });
-    const edges = (n: number) => ({ left: e(2), right: e(n), attribution: "", attribution_url: "" });
+    const edges = (n: number) => ({ left: e(2), right: e(n), kerbs: [], attribution: "", attribution_url: "" });
     expect(() => checkCourse(doc([], edges(2)))).not.toThrow();
     expect(() => checkCourse(doc([], edges(3)))).toThrow(/コースの端（right）/);
+  });
+
+  it("縁石がない・長さが違えば失敗させる", () => {
+    const e = { x: [0, 0], y: [0, 0] };
+    const base = { left: e, right: e, attribution: "", attribution_url: "" };
+    const old = { ...base } as unknown as CourseData["edges"];
+    expect(() => checkCourse(doc([], old))).toThrow(/kerbs がない/);
+    const bad = { ...base, kerbs: [{ side: "left" as const, i: [0, 1], x: [0], y: [0, 0] }] };
+    expect(() => checkCourse(doc([], bad))).toThrow(/縁石（left）/);
   });
 });
 

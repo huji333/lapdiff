@@ -45,9 +45,11 @@
   区間ごとの自己ベストは web view が `section_times` の最小から求める（書き出さない）。
 - `min_diff_s`：区間タイムの差をこれ未満なら「差なし」とみなすしきい値 [s]（仮の値）。web view が読む。
 - `edges`：コースの端（`track/<course>/edges.csv`、`ingest.edges` が空中写真から作る）を、基準線の格子の各 `s` で
-  左右の端の点 `{"left": {"x", "y"}, "right": {"x", "y"}, "attribution", "attribution_url"}` にしたもの。
+  左右の端の点 `{"left": {"x", "y"}, "right": {"x", "y"}, "kerbs", "attribution", "attribution_url"}` にしたもの。
   出典の表記は `edges.csv` の頭の `# attribution = ...` をそのまま渡す。`edges.csv` がなければ null。
-  端は白線・縁石の内側で、写真と GPS の位置合わせの誤差で ±1〜2 m ずれうる。
+  端は白線の外側（走路の限界）で、写真と GPS の位置合わせの誤差で ±1〜2 m ずれうる。
+  `kerbs` は路面の端より外にある縁石（赤い縁石）の帯の多角形の並び `[{"side", "i", "x", "y"}]`。
+  路面の端を格子の添字の順に進み、縁石の外の線を戻る。`i` は各点の基準線の格子の添字で、範囲を切り出すのに使う。
 - データの場所に別のコースの周が混ざっていれば `data.check_length` で失敗させる。
   `s` が格子の整数でない行、同じ周で `s` が重なる行、NaN も失敗させる。
 """
@@ -96,13 +98,19 @@ def edges(line, course_dir: Path) -> dict | None:
     path = course_dir / "edges.csv"
     if not path.exists():
         return None
-    df = pl.read_csv(path, comment_prefix="#", schema={"s": pl.Float64, "left_m": pl.Float64, "right_m": pl.Float64})
+    cols = ["left_m", "right_m", "left_kerb_m", "right_kerb_m"]
+    header = next(r for r in path.read_text(encoding="utf-8").splitlines() if not r.startswith("#"))
+    if header.split(",") != ["s", *cols]:
+        raise ValueError(f"{path} の列が {['s', *cols]} でない（python -m ingest.edges で作り直す）")
+    df = pl.read_csv(path, comment_prefix="#", schema={"s": pl.Float64, **{c: pl.Float64 for c in cols}})
     s = df["s"].to_numpy()
     if len(s) != len(line.s) or not np.allclose(s, line.s, atol=1e-3):
         raise ValueError(f"{path} の s が基準線の格子と違う（基準線を作り直したら python -m ingest.edges も回す）")
-    left, right = df["left_m"].to_numpy(), df["right_m"].to_numpy()
-    if not (np.isfinite(left).all() and np.isfinite(right).all()):
+    left, right, left_kerb, right_kerb = (df[c].to_numpy() for c in cols)
+    if not all(np.isfinite(v).all() for v in (left, right, left_kerb, right_kerb)):
         raise ValueError(f"{path} に NaN がある")
+    if (left_kerb < left).any() or (right_kerb < right).any():
+        raise ValueError(f"{path} に縁石の外の線が路面の端より内側の所がある")
     meta = {}
     for row in path.read_text(encoding="utf-8").splitlines():
         if row.startswith("# ") and " = " in row:
@@ -116,8 +124,32 @@ def edges(line, course_dir: Path) -> dict | None:
     def pts(off: np.ndarray) -> dict:
         return {"x": [round(float(v), 2) for v in rx + off * nx], "y": [round(float(v), 2) for v in ry + off * ny]}
 
-    return {"left": pts(left), "right": pts(-right),
+    kerbs = []
+    for side, sign, paved, outer in (("left", 1, left, left_kerb), ("right", -1, right, right_kerb)):
+        for run in runs(outer > paved):
+            # 縁石の両端は路面の端に戻す（帯の端を尖らせて閉じる）
+            ii = np.r_[run[0] - 1, run, run[-1] + 1] % len(line.s)
+            inner = sign * paved[ii]
+            outer_run = sign * np.r_[paved[ii[0]], outer[run], paved[ii[-1]]]
+            ring = np.r_[ii, ii[::-1]]
+            off = np.r_[inner, outer_run[::-1]]
+            kerbs.append({"side": side, "i": [int(v) for v in ring],
+                          "x": [round(float(v), 2) for v in rx[ring] + off * nx[ring]],
+                          "y": [round(float(v), 2) for v in ry[ring] + off * ny[ring]]})
+    return {"left": pts(left), "right": pts(-right), "kerbs": kerbs,
             "attribution": meta["attribution"], "attribution_url": meta["attribution_url"]}
+
+
+def runs(mask: np.ndarray) -> list[np.ndarray]:
+    """閉じた並び `mask` の True が続く所ごとの添字。末尾から先頭へ続く所は 1 つにまとめる（添字は末尾の側から並ぶ）。"""
+    n = len(mask)
+    if mask.all():
+        raise ValueError("縁石が 1 周すべてを覆っている")
+    start = int(np.flatnonzero(~mask)[0])  # False の所から回し、先頭をまたぐ並びを切らない
+    order = (np.arange(n) + start) % n
+    m = mask[order]
+    d = np.diff(np.r_[0, m.astype(int), 0])
+    return [order[a:b] for a, b in zip(np.flatnonzero(d == 1), np.flatnonzero(d == -1))]
 
 
 def brake_point(ax: list[float | None], lo: int, hi: int) -> tuple[int | None, float | None]:

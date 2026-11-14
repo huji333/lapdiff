@@ -260,10 +260,13 @@ def test_export_no_sections(data_dir, course_dir):
     assert all(lap["section_times"] is None for lap in doc["laps"])
 
 
-def write_edges_csv(course_dir, s, left, right):
-    rows = "".join(f"{a},{b},{c}\n" for a, b, c in zip(s, left, right))
+def write_edges_csv(course_dir, s, left, right, left_kerb=None, right_kerb=None):
+    left_kerb = left if left_kerb is None else left_kerb
+    right_kerb = right if right_kerb is None else right_kerb
+    rows = "".join(f"{a},{b},{c},{d},{e}\n" for a, b, c, d, e in zip(s, left, right, left_kerb, right_kerb))
     head = "# test\n# attribution = 出典の表記\n# attribution_url = https://example.com/\n"
-    (course_dir / "edges.csv").write_text(head + "s,left_m,right_m\n" + rows, encoding="utf-8")
+    (course_dir / "edges.csv").write_text(
+        head + "s,left_m,right_m,left_kerb_m,right_kerb_m\n" + rows, encoding="utf-8")
 
 
 def test_export_edges(data_dir, course_dir):
@@ -280,7 +283,40 @@ def test_export_edges(data_dir, course_dir):
     assert edges["left"]["y"][50] == pytest.approx(3.0)
     assert edges["right"]["y"][50] == pytest.approx(-4.0)
     assert edges["attribution"] == "出典の表記"
+    assert edges["kerbs"] == []
     json.dumps(doc, allow_nan=False)
+
+
+def test_export_kerbs(data_dir, course_dir):
+    """縁石のある所（左の 40〜49）だけが帯の多角形になる。路面の端を進み、縁石の外の線を戻る。"""
+    s = np.arange(101.0)
+    left, right = np.full(101, 3.0), np.full(101, 4.0)
+    left_kerb = left.copy()
+    left_kerb[40:50] = 5.0
+    write_edges_csv(course_dir, s, left, right, left_kerb=left_kerb)
+    doc = export.export_course(data_dir, course_dir)
+    (kerb,) = doc["edges"]["kerbs"]
+    assert kerb["side"] == "left"
+    assert kerb["i"] == [*range(39, 51), *range(50, 38, -1)]
+    assert kerb["y"][:12] == pytest.approx([3.0] * 12)
+    assert kerb["y"][12:] == pytest.approx([3.0, *[5.0] * 10, 3.0])
+
+
+def test_export_kerbs_wrap():
+    # 先頭をまたぐ並びは 1 つにまとまる
+    mask = np.zeros(10, dtype=bool)
+    mask[[0, 1, 8, 9, 4]] = True
+    got = [r.tolist() for r in export.runs(mask)]
+    assert sorted(got) == sorted([[4], [8, 9, 0, 1]])
+
+
+def test_export_edges_old_columns(data_dir, course_dir):
+    s = np.arange(101.0)
+    rows = "".join(f"{a},3,4\n" for a in s)
+    head = "# attribution = a\n# attribution_url = b\n"
+    (course_dir / "edges.csv").write_text(head + "s,left_m,right_m\n" + rows, encoding="utf-8")
+    with pytest.raises(ValueError, match="列が"):
+        export.export_course(data_dir, course_dir)
 
 
 def test_export_edges_missing(data_dir, course_dir):
@@ -303,7 +339,7 @@ def test_export_edges_nan(data_dir, course_dir):
 
 
 def test_export_edges_no_attribution(data_dir, course_dir):
-    rows = "".join(f"{a},3,4\n" for a in range(101))
-    (course_dir / "edges.csv").write_text("s,left_m,right_m\n" + rows, encoding="utf-8")
+    rows = "".join(f"{a},3,4,3,4\n" for a in range(101))
+    (course_dir / "edges.csv").write_text("s,left_m,right_m,left_kerb_m,right_kerb_m\n" + rows, encoding="utf-8")
     with pytest.raises(ValueError, match="出典"):
         export.export_course(data_dir, course_dir)

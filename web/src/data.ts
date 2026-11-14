@@ -77,12 +77,24 @@ export interface Point2 {
 }
 
 /**
+ * 路面の端より外にある縁石の帯の多角形（analysis.export の edges.kerbs）。路面の端を格子の添字の順に進み、
+ * 縁石の外の線を戻る。i は各点の基準線の格子の添字
+ */
+export interface Kerb {
+  side: "left" | "right";
+  i: number[];
+  x: number[];
+  y: number[];
+}
+
+/**
  * コースの端（analysis.export の edges）。基準線の格子の各 s での左右の端の点。
- * 空中写真から取り出した白線・縁石の内側で、±1〜2 m ずれうる。attribution は出典の表記
+ * 空中写真から取り出した白線の外側（走路の限界）で、±1〜2 m ずれうる。attribution は出典の表記
  */
 export interface Edges {
   left: Point2;
   right: Point2;
+  kerbs: Kerb[];
   attribution: string;
   attribution_url: string;
 }
@@ -137,6 +149,14 @@ export function checkCourse(doc: CourseData): void {
       const e = doc.edges[side];
       if (e.x.length !== r.s.length || e.y.length !== r.s.length) {
         throw new Error(`${doc.course}: コースの端（${side}）の長さが基準線と違う`);
+      }
+    }
+    if (!Array.isArray(doc.edges.kerbs)) {
+      throw new Error(`${doc.course}: コースの端に kerbs がない（npm run data で書き出し直す）`);
+    }
+    for (const k of doc.edges.kerbs) {
+      if (k.x.length !== k.i.length || k.y.length !== k.i.length) {
+        throw new Error(`${doc.course}: 縁石（${k.side}）の i, x, y の長さが違う`);
       }
     }
   }
