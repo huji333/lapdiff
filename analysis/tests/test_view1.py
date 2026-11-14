@@ -27,6 +27,25 @@ def test_view1_chart_links_selections(db):
     assert params["map_brush"]["views"] == ["map_points_0"]
 
 
+@pytest.mark.filterwarnings("ignore:Automatically deduplicated selection parameter")
+def test_view1_chart_draws_corners(db):
+    from ingest.corners import Corner
+
+    tel = data.time_delta(data.load_laps(db, ["racechrono rc1 #2"]), "racechrono rc1 #2")
+    line = Refline(S.astype(float), S.astype(float), np.zeros(len(S)), LENGTH)
+    corners = [Corner("T1", "1コーナー", 10, 30, 20, -40), Corner("T2", "x", 50, 70, 60, 40)]
+    with_c = view1_chart(tel, line, "racechrono rc1 #2", corners).to_dict()
+    without = view1_chart(tel, line, "racechrono rc1 #2").to_dict()
+    # 帯（速度・Δt）、id（速度）、コース図の id の 4 層が増える
+    def n_layers(spec):
+        return len(spec["hconcat"][0]["layer"]) + sum(
+            len(v["layer"]) for v in spec["hconcat"][1]["vconcat"]
+        )
+
+    assert n_layers(with_c) - n_layers(without) == 4
+    assert "T2" in str(with_c["datasets"])
+
+
 def test_view1_notebook_runs(tmp_path):
     """実際の基準線の上に作った周で、ノートブックを script として最後まで実行する。"""
     line = load_refline(TRACK_DIR / "okayama")

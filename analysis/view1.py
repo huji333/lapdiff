@@ -19,11 +19,12 @@ def _():
 
     from analysis import data
     from analysis.charts import view1_chart
+    from ingest.corners import load_corners
     from ingest.track import TRACK_DIR, load_refline
 
     # 速度とタイム差のグラフで同じ選択 s_brush を共有するときに altair が出す通知。共有は意図どおり
     warnings.filterwarnings("ignore", message="Automatically deduplicated selection parameter")
-    return Path, TRACK_DIR, data, load_refline, mo, view1_chart
+    return Path, TRACK_DIR, data, load_corners, load_refline, mo, view1_chart
 
 
 @app.cell
@@ -50,14 +51,17 @@ def _(TRACK_DIR, data, mo):
 
 
 @app.cell
-def _(Path, TRACK_DIR, course_ui, data, data_dir_ui, load_refline):
+def _(Path, TRACK_DIR, course_ui, data, data_dir_ui, load_corners, load_refline):
     if course_ui.value is None:
         raise FileNotFoundError(f"{TRACK_DIR}/<course>/refline.csv がない")
     line = load_refline(TRACK_DIR / course_ui.value)
+    # corners.toml はコースによってはまだない。ないときは帯を描かず、その旨を表示する
+    has_corners = (TRACK_DIR / course_ui.value / "corners.toml").exists()
+    corners = load_corners(TRACK_DIR / course_ui.value) if has_corners else None
     con = data.open_db(Path(data_dir_ui.value).expanduser())
     laps = data.lap_list(con)
     data.check_length(laps, line.length)
-    return con, laps, line
+    return con, corners, laps, line
 
 
 @app.cell
@@ -108,7 +112,7 @@ def _(data, laps, mo, show_invalid_ui):
 
 
 @app.cell
-def _(con, data, laps_ui, line, mo, ref_ui, view1_chart):
+def _(con, corners, data, laps_ui, line, mo, ref_ui, view1_chart):
     mo.stop(
         ref_ui.value is None,
         mo.callout(
@@ -125,12 +129,17 @@ def _(con, data, laps_ui, line, mo, ref_ui, view1_chart):
                 "コース図で矩形をドラッグすると、基準線のその範囲の s が距離のグラフに帯で出る。"
                 "距離のグラフで横にドラッグすると、その s の範囲がコース図で赤くなる。"
                 "ダブルクリックで選択を消す。"
+                + (
+                    "灰色の帯と T1 などの記号はコーナーの区間（corners.toml）。"
+                    if corners
+                    else "このコースには corners.toml がないので、コーナーの区間は描かない。"
+                )
             ),
             # mo.ui.altair_chart で包むと、周の行は Arrow のファイルとして別に送られる。
             # 素の altair のままだと仕様に JSON で埋め込まれ、3 周で出力の上限（数 MB）を超える。
             # 区間の選択は Vega-Lite の中で連動させるので、marimo の選択は使わない
             mo.ui.altair_chart(
-                view1_chart(tel, line, ref_ui.value),
+                view1_chart(tel, line, ref_ui.value, corners),
                 chart_selection=False,
                 legend_selection=False,
             ),
