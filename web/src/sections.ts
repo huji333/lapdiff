@@ -5,7 +5,7 @@
 import * as d3 from "d3";
 import type { Link } from "./brush";
 import type { Losses } from "./derive";
-import { fmt, lapLabel, message } from "./dom";
+import { fmt, lapLabel, message, sourceName } from "./dom";
 import {
   bestPool,
   lossVsBest,
@@ -122,9 +122,9 @@ export function setupPanel(panel: HTMLElement, toggle: HTMLButtonElement): void 
 export function renderPanel(body: HTMLElement, title: HTMLElement, doc: CourseData, losses: Losses, link: Link): void {
   const { lap, rows: all } = losses;
   title.textContent = "自己ベストとの差 [s]";
-  title.title = `${lap.source} の有効な周（全セッション）の区間ごとの最速をつないだ値。ベストラップではない`;
+  title.title = `${sourceName(lap.source)} の有効な周（全セッション）の区間ごとの最速をつないだ値。ベストラップではない`;
   if (!losses.comparable) {
-    message(body, `比べる ${lap.source} の有効な周がほかにない`);
+    message(body, `比べる ${sourceName(lap.source)} の有効な周がほかにない`);
     return;
   }
   const known = all.filter((r) => r.loss != null);

@@ -501,12 +501,8 @@ function renderTable(state: State, d: Derived): void {
     }
     tr.insertCell().append(lapName(lap, d.style(lap)));
     const time = tr.insertCell();
-    if (lap.complete) {
-      time.textContent = fmt(lap.t_end, 3);
-    } else {
-      time.textContent = FRAGMENT;
-      time.title = `t_end ${fmt(lap.t_end, 3)} s`;
-    }
+    time.textContent = lapTime(lap);
+    if (!lap.complete) time.title = `t_end ${fmt(lap.t_end, 3)} s`;
     const diff = tr.insertCell();
     const dt = d.dts.get(lap.label);
     const last = dt ? finalDelta(dt) : null;

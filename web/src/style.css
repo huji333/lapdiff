@@ -5,7 +5,7 @@
 }
 
 /* 色と形の値。ライトだけ。
-   周の線と損失の色（--ref、--cmp、--select、--loss-0、--loss）はここに書かない。
+   基準の線、選択、損失の色（--ref、--select、--loss）はここに書かない。
    正は charts.ts と sections.ts の定数で、main.ts が起動時に :root へ書く。
    --header-h は sticky のツールバーの高さで、main.ts が測って書く */
 :root {

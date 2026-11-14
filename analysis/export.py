@@ -21,7 +21,7 @@
   - `shownLaps`・`refCandidates`・`defaultSelection`：`analysis/view1.py` の周の絞り込み
     （一覧に出す周、基準ラップの候補、既定で重ねる周）。
   - `SCHEMA` と、`checkCourse` が確かめるチャンネルの一覧（`CHANNELS`）：ここの `SCHEMA` と `DIGITS` のキー。
-  `web/src/fixtures/contract.json` は小さいコースの書き出しで、pytest（`test_export.py`）が今の出力と一致することを、
+  `web/src/fixtures/contract.json` は小さいコースの書き出しで、pytest（`test_export_contract.py`）が今の出力と一致することを、
   vitest（`data.test.ts`）がそれを読んで `checkCourse` と写した処理の結果を確かめる。
 - `schema`：書き出す形の版 `SCHEMA`。web view は版が違えば「npm run data で書き出し直す」と失敗させる。
 - `channels`：周ごとの配列のキー（`DIGITS` のキーの並び）。web view が周のキーと長さを確かめるのに使う。
@@ -34,7 +34,9 @@
   区間の格子に 1 点でも欠けがあれば、そのコーナーの値は全部 null にする（欠けた所の値を補わない。SPEC 原則 6）。
 - ブレーキ開始点 `s_brake` と最大減速度 `ax_min`（SPEC「コーナーごとの指標」の GPS のみでの出し方）：
   前のコーナーの区間の終点（なければ計測線）と、区間の始点の `BRAKE_LOOKBACK` m 手前のうち後の方から、
-  ボトムの位置までを探す。`ax_min` はその範囲の `ax` の最小値。`ax_min` が `-BRAKE_G` を下回れば、
+  ボトムの位置までを探す。前のコーナーの終点は延ばした終点（`sections`）なので、間の隙間が `SECTION_MERGE` m
+  以下なら下限はこの区間の始点になり、その隙間で踏み始めた周の `s_brake` は始点に張り付く。
+  `ax_min` はその範囲の `ax` の最小値。`ax_min` が `-BRAKE_G` を下回れば、
   その点から手前へ `ax < -BRAKE_G` が続く最初の点を `s_brake` にする。下回らなければ `s_brake` は null
   （ブレーキなし。`ax_min` は出す）。範囲の `ax` に欠けがあれば両方 null。
   `BRAKE_G` は仮の値（SPEC「未決事項」）で、web view が線を引けるよう `brake_g` として書き出す。

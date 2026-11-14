@@ -42,6 +42,11 @@ export function swatch(style: LapStyle): SVGSVGElement {
 
 const SOURCE_SHORT: Record<string, string> = { racechrono: "RC", ac: "AC" };
 
+/** 画面に出すソースの短い名前（RC、AC）。知らないソースはそのまま */
+export function sourceName(source: string): string {
+  return SOURCE_SHORT[source] ?? source;
+}
+
 /**
  * 画面に出す周の短い名前。例「RC 10/12 12:00 #10」。session_id（ingest が書く UTC の `%Y%m%dT%H%M%SZ`）を
  * 現地時刻の月/日 時:分にする。同じ日に同じソースのセッションが 2 つあっても衝突しないよう時刻を含める。
@@ -49,7 +54,7 @@ const SOURCE_SHORT: Record<string, string> = { racechrono: "RC", ac: "AC" };
  * session_id がこの形でなければ、そのまま出す。
  */
 export function lapLabel(lap: Lap): string {
-  const src = SOURCE_SHORT[lap.source] ?? lap.source;
+  const src = sourceName(lap.source);
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(lap.session_id);
   if (!m) return `${src} ${lap.session_id} #${lap.lap}`;
   const [, y, mo, d, h, mi, s] = m.map(Number) as number[];
