@@ -350,7 +350,7 @@ def main(argv: list[str]) -> None:
         f"白線（アスファルトの端から {LINE_SEARCH:g} m 以内で始まる最初の白の並び、幅 {LINE_MAX:g} m まで）は"
         f"路面（left_m・right_m、走路の限界は白線の外側）に含める\n"
         f"left_kerb_m・right_kerb_m は縁石の外の線（白線の外から {KERB_MAX:g} m 以内の最も外の赤）。縁石のない所は路面の端と同じ。"
-        f"前後 {KERB_WIN} 点のうち {KERB_HITS} 点以上で赤があれば縁石とし、幅は赤のあった点の中央値\n"
+        f"前後 {KERB_WIN} 点（計 {2 * KERB_WIN + 1} 点）のうち {KERB_HITS} 点以上で赤があれば縁石とし、幅は赤のあった点の中央値\n"
         f"外れ値：幅 {WIDTH_MIN:g}〜{WIDTH_MAX:g} m の外、片側 {SIDE_MIN:g} m 未満を捨てる。"
         f"前後 {SMOOTH} 点（{SMOOTH * line.length / len(line.s):.0f} m）の中央値で平滑化"
     )
