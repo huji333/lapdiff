@@ -18,3 +18,9 @@ collector/dist/
 
 # marimo
 __marimo__/
+
+# web view の書き出し（analysis.export が作る）
+/web/public/data/
+
+# Claude Code のエージェントが作る worktree
+/.claude/worktrees/

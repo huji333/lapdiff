@@ -1,0 +1,205 @@
+import json
+
+import numpy as np
+import polars as pl
+import pytest
+
+from analysis import export
+from analysis.tests.helpers import LENGTH, S, lap_rows, write
+from ingest.track import Refline, write_refline
+
+
+@pytest.fixture
+def course_dir(tmp_path):
+    d = tmp_path / "track" / "test"
+    d.mkdir(parents=True)
+    s = np.arange(101.0)
+    write_refline(Refline(s, s, np.zeros(101), LENGTH), d / "refline.csv", "test")
+    return d
+
+
+@pytest.fixture
+def data_dir(tmp_path):
+    d = tmp_path / "data"
+    write(
+        d,
+        lap_rows("racechrono", "rc1", 1, True, S, S / 10),
+        lap_rows("racechrono", "rc1", 2, True, S, S / 20),
+        # s = 10〜39 だけの断片
+        lap_rows("racechrono", "rc1", 3, False, S[10:40], S[10:40] / 40),
+        lap_rows("ac", "ac1", 2, True, S, S / 30),
+    )
+    return d
+
+
+def laps_by_label(doc):
+    return {lap["label"]: lap for lap in doc["laps"]}
+
+
+def test_export_course(data_dir, course_dir):
+    doc = export.export_course(data_dir, course_dir)
+    assert doc["course"] == "test"
+    assert doc["length"] == pytest.approx(LENGTH)
+    assert doc["grid_max"] == 100
+    assert len(doc["refline"]["s"]) == 101
+    assert doc["corners"] is None
+    assert doc["default_ref"] == "racechrono rc1 #2"
+
+    laps = laps_by_label(doc)
+    assert list(laps) == ["ac ac1 #2", "racechrono rc1 #1", "racechrono rc1 #2", "racechrono rc1 #3"]
+    for lap in laps.values():
+        for col in ("t", "speed_kmh", "x", "y", "ax", "ay"):
+            assert len(lap[col]) == 101
+
+    full = laps["racechrono rc1 #1"]
+    assert full["complete"] and full["lap_valid"]
+    assert full["t_end"] == pytest.approx(10.0)
+    # 添字が s と一致する
+    assert full["t"][37] == pytest.approx(3.7)
+    assert full["x"][37] == pytest.approx(37.0)
+    assert full["speed_kmh"][0] == pytest.approx(144.0)
+
+    part = laps["racechrono rc1 #3"]
+    assert not part["complete"] and not part["lap_valid"]
+    assert part["t"][:10] == [None] * 10
+    assert part["t"][40:] == [None] * 61
+    assert part["t"][10] == pytest.approx(0.25)
+    assert part["x"][39] == pytest.approx(39.0)
+
+
+def test_export_g_null(tmp_path, course_dir):
+    """行があって ax・ay が null の点（停止中など）は null のまま書く。"""
+    lap = lap_rows("racechrono", "rc1", 1, True, S, S / 10).with_columns(
+        ax=pl.when(pl.col("s") < 5).then(None).otherwise(0.123456),
+        ay=pl.when(pl.col("s") < 5).then(None).otherwise(-0.5),
+    )
+    write(tmp_path / "data", lap)
+    full = export.export_course(tmp_path / "data", course_dir)["laps"][0]
+    assert full["ax"][:5] == [None] * 5
+    assert full["ay"][:5] == [None] * 5
+    assert full["ax"][5] == 0.123
+    assert full["ay"][50] == -0.5
+    assert full["t"][0] == 0.0
+
+
+def test_export_corners(data_dir, course_dir):
+    (course_dir / "corners.toml").write_text(
+        '[[corner]]\nid = "T1"\nname = "一"\ns_start = 10\ns_end = 30\ns_apex = 20\n'
+        '\n[[corner]]\nid = "T2"\nname = "二"\ns_start = 40\ns_end = 60\n',
+        encoding="utf-8",
+    )
+    doc = export.export_course(data_dir, course_dir)
+    assert doc["corners"] == [
+        {"id": "T1", "name": "一", "s_start": 10.0, "s_apex": 20.0, "s_end": 30.0},
+        {"id": "T2", "name": "二", "s_start": 40.0, "s_apex": None, "s_end": 60.0},
+    ]
+
+
+def test_export_mixed_length(tmp_path, data_dir, course_dir):
+    # 別のコース（全長が違う）の周が混ざっている
+    write(data_dir, lap_rows("racechrono", "other", 1, True, S, S / 10, length=200.5))
+    with pytest.raises(ValueError, match="全長"):
+        export.export_course(data_dir, course_dir)
+
+
+@pytest.mark.parametrize(
+    "s",
+    [
+        # 格子の整数でない s
+        np.arange(10, 40) + 0.5,
+        # grid_max（100）を超える s。全長は同じで、格子だけからはみ出す
+        np.arange(90, 102),
+    ],
+)
+def test_export_off_grid(data_dir, course_dir, s):
+    write(data_dir, lap_rows("racechrono", "rc2", 1, False, s, s / 10))
+    with pytest.raises(ValueError, match="格子"):
+        export.export_course(data_dir, course_dir)
+
+
+def test_export_duplicate_s(data_dir, course_dir):
+    # 同じ周で s = 20 の行が 2 つある
+    s = np.concatenate([S, [20]])
+    write(data_dir, lap_rows("racechrono", "rc2", 1, True, s, s / 10))
+    with pytest.raises(ValueError, match="重なる"):
+        export.export_course(data_dir, course_dir)
+
+
+def test_write_export(tmp_path, data_dir, course_dir):
+    out = tmp_path / "out"
+    (out).mkdir()
+    (out / "other.json").write_text("{}", encoding="utf-8")
+    path = export.write_export(export.export_course(data_dir, course_dir), out)
+    assert path == out / "test.json"
+    assert json.loads(path.read_text(encoding="utf-8"))["grid_max"] == 100
+    assert json.loads((out / "index.json").read_text()) == {"courses": ["other", "test"]}
+    doc = export.export_course(data_dir, course_dir)
+    doc["laps"][0]["t"][0] = float("nan")
+    with pytest.raises(ValueError):
+        export.write_export(doc, out)
+
+
+def test_export_offset(tmp_path, course_dir):
+    """基準線は x 軸に沿って +x へ進む。y = +2 の周は左に 2 m ずれている。"""
+    lap = lap_rows("racechrono", "rc1", 1, True, S, S / 10, xy=(S.astype(float), np.full(101, 2.0)))
+    write(tmp_path / "data", lap)
+    full = export.export_course(tmp_path / "data", course_dir)["laps"][0]
+    assert full["offset"][50] == pytest.approx(2.0)
+    assert full["corner_stats"] is None
+    # CAN のない実車：ペダルは全部 null
+    assert full["throttle"] == [None] * 101
+    assert full["brake"] == [None] * 101
+
+
+def test_export_pedals(tmp_path, course_dir):
+    lap = lap_rows("ac", "ac1", 2, True, S, S / 30).with_columns(
+        throttle=pl.Series(np.linspace(0, 1, 101)), brake=pl.Series(np.full(101, 0.25))
+    )
+    write(tmp_path / "data", lap)
+    full = export.export_course(tmp_path / "data", course_dir)["laps"][0]
+    assert full["throttle"][50] == pytest.approx(0.5)
+    assert full["brake"][0] == pytest.approx(0.25)
+
+
+def test_export_corner_stats(tmp_path, course_dir):
+    (course_dir / "corners.toml").write_text(
+        '[[corner]]\nid = "T1"\nname = "一"\ns_start = 10.5\ns_end = 30\n'
+        '\n[[corner]]\nid = "T2"\nname = "二"\ns_start = 50\ns_end = 60\n',
+        encoding="utf-8",
+    )
+    speed = np.full(101, 40.0)
+    speed[20] = 20.0
+    full = lap_rows("racechrono", "rc1", 1, True, S, S / 10).with_columns(speed=pl.Series(speed))
+    # s = 0〜55 だけの断片：T2 の区間に欠けがある
+    part = lap_rows("racechrono", "rc1", 2, False, S[:56], S[:56] / 10)
+    write(tmp_path / "data", full, part)
+    laps = laps_by_label(export.export_course(tmp_path / "data", course_dir))
+
+    t1, t2 = laps["racechrono rc1 #1"]["corner_stats"]
+    # 区間の格子は s = 11〜30
+    assert t1 == {"id": "T1", "t_section": pytest.approx(1.9), "v_min": pytest.approx(72.0),
+                  "s_vmin": 20, "v_entry": pytest.approx(144.0), "v_exit": pytest.approx(144.0),
+                  "s_brake": None, "ax_min": 0.0}
+    assert t2["t_section"] == pytest.approx(1.0)
+
+    p1, p2 = laps["racechrono rc1 #2"]["corner_stats"]
+    assert p1["t_section"] == pytest.approx(1.9)
+    assert p2 == {"id": "T2", "t_section": None, "v_min": None, "s_vmin": None,
+                  "v_entry": None, "v_exit": None, "s_brake": None, "ax_min": None}
+
+
+@pytest.mark.parametrize(
+    ("ax", "expected"),
+    [
+        # 0.1 → -0.2 → -0.5（最小）→ -0.4 → -0.1：-0.3 を下回り始めるのは添字 2
+        ([0.1, -0.2, -0.5, -0.4, -0.1], (12, -0.5)),
+        # 下回らない：ブレーキなし
+        ([0.1, -0.2, -0.25, 0.0], (None, -0.25)),
+        # 欠けがある
+        ([0.1, None, -0.5], (None, None)),
+        # 最小の手前で一度戻った所より前は含めない
+        ([-0.5, 0.0, -0.4, -0.6], (12, -0.6)),
+    ],
+)
+def test_brake_point(ax, expected):
+    assert export.brake_point([None] * 10 + ax, 10, 10 + len(ax) - 1) == expected

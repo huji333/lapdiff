@@ -11,6 +11,9 @@
   ラップタイムより最後の 1 m 弱の分だけ短い。周どうしの比較にだけ使う。
 - タイム差：`dt(s) = t_lap(s) - t_ref(s)`。同じ `s` の格子の行どうしで引く。
   `complete` でない周は `t` の原点（周の開始）が比べられないため、`dt` を null にする。
+  web view（`web/`）は基準ラップを画面で選ぶので、同じ計算を TypeScript でも行う
+  （書き出しは `analysis.export`。全組み合わせを先に計算すると周の数の 2 乗になるため）。
+  ここと `final_delta` を変えたら `web/src/data.ts`（`timeDelta`・`finalDelta`）も合わせる。
 """
 
 import os
@@ -140,7 +143,10 @@ def time_delta(tel: pl.DataFrame, ref: str) -> pl.DataFrame:
 
 
 def final_delta(tel: pl.DataFrame) -> pl.DataFrame:
-    """周ごとの、`dt` が出ている最後の `s` での `dt`（`time_delta` の返り値から）。"""
+    """周ごとの、`dt` が出ている最後の `s` での `dt`（`time_delta` の返り値から）。
+
+    web view は同じ計算を `web/src/data.ts` の `finalDelta` で行う。変えたらそちらも合わせる。
+    """
     return (
         tel.filter(pl.col("dt").is_not_null())
         .group_by("label", maintain_order=True)
