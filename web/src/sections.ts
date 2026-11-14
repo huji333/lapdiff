@@ -30,6 +30,14 @@ export interface MiniLoss {
   loss: (number | null)[];
 }
 
+/**
+ * 自己ベストを決める周が、`lap` のほかにあるか。なければ損失はすべて 0（`lap` が同じソースで唯一の有効な周）か、
+ * 値がない（有効な周がない）ので、比べる意味がない。
+ */
+export function hasOtherBest(doc: CourseData, lap: Lap): boolean {
+  return bestPool(doc.laps, lap).some((l) => l !== lap && l.section_times != null);
+}
+
 export function sectionLosses(doc: CourseData, lap: Lap): SectionLoss[] | null {
   if (!doc.sections || !lap.section_times) return null;
   const pool = bestPool(doc.laps, lap).flatMap((l) => (l.section_times ? [l.section_times] : []));
@@ -112,6 +120,15 @@ export function renderPanel(
   const total = d3.sum(known, (r) => r.loss!);
   const missing = losses.length - known.length;
   title.textContent = `区間ごとの損失（自己ベストとの差）`;
+  if (!hasOtherBest(doc, lap)) {
+    const p = document.createElement("p");
+    p.className = "message";
+    p.textContent =
+      `${lap.label} のほかに、区間タイムのそろった ${lap.source} の有効な周がないので、自己ベストと比べられない` +
+      (lap.lap_valid ? "（自分自身との差になり、すべて 0）。" : "。");
+    body.replaceChildren(p);
+    return;
+  }
 
   const summary = document.createElement("p");
   summary.className = "sp-summary";

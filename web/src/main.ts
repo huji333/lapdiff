@@ -3,7 +3,7 @@
 import "./style.css";
 import { attachDistance, attachMap, drawDots, gAt, Link, type DistanceId } from "./brush";
 import { renderCorner } from "./corner";
-import { lossColor, miniLosses, renderPanel, sectionLosses, setupPanel } from "./sections";
+import { hasOtherBest, lossColor, miniLosses, renderPanel, sectionLosses, setupPanel } from "./sections";
 import {
   courseMap,
   distanceChart,
@@ -14,6 +14,7 @@ import {
   PAIR_COLORS,
   type Chart,
   type LapStyle,
+  type Paint,
 } from "./charts";
 import {
   defaultComparison,
@@ -97,6 +98,8 @@ const G_HEIGHT = 170;
 const G_PX_PER_M = 0.75;
 /** コース図の高さの下限 [px]。これより低い画面ではページごとスクロールする */
 const MAP_MIN_HEIGHT = 500;
+/** コーナーの拡大図の幅の下限 [px] */
+const CORNER_MAP_MIN_WIDTH = 320;
 
 let state: State | null = null;
 const link = new Link();
@@ -256,7 +259,9 @@ function render(): void {
       message(ui.corner.map, "このコースには corners.toml がないので、コーナーのビューは出せない");
       return;
     }
-    renderCorner(ui.corner, doc, corner, overlaid, ref, style, swatch, cornerLink, mapHeight);
+    // 拡大図の幅は列の幅に合わせる。列の幅は CSS の flex で決まり、中の図の幅には引きずられない
+    const mapWidth = Math.max(CORNER_MAP_MIN_WIDTH, ui.corner.map.clientWidth);
+    renderCorner(ui.corner, doc, corner, overlaid, ref, style, swatch, cornerLink, mapWidth, mapHeight);
     return;
   }
 
@@ -264,8 +269,9 @@ function render(): void {
   // 区間ごとの損失：2 周で比べるときの比較の周について出す。複数の周を重ねるときは出さない
   const losses = !state.multi && cmp ? sectionLosses(doc, cmp) : null;
   ui.panel.root.hidden = losses == null;
-  let paint: { bounds: number[]; color: (string | null)[] } | null = null;
-  if (losses && cmp) {
+  let paint: Paint | null = null;
+  // 自己ベストを決める周がほかにない（損失がすべて 0）ときは塗らない
+  if (losses && cmp && hasOtherBest(doc, cmp)) {
     const mini = miniLosses(doc, cmp);
     const color = lossColor(Math.max(0.1, ...mini.loss.map((v) => v ?? 0)));
     paint = { bounds: mini.bounds, color: mini.loss.map(color) };

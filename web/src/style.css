@@ -77,10 +77,26 @@ main {
   margin-top: 8px;
 }
 
+/* コーナーのビュー：右の列はグラフ（幅 640 px）が入る幅にとり、残りを拡大図に回す。
+   拡大図の列の幅は中の図に引きずられない（min-width: 0）ので、main.ts はこの幅を測って図を描く。
+   折り返すと貼り付いた拡大図が下のグラフを覆うので、折り返さずに両方を縮める */
 .cmap-col {
-  flex: 0 0 auto;
+  flex: 1 1 420px;
+  min-width: 0;
   position: sticky;
   top: 0;
+}
+
+#view-corner {
+  flex-wrap: nowrap;
+}
+
+#view-corner .dist-col {
+  flex: 0 1 680px;
+}
+
+#view-corner .g-row {
+  flex-wrap: wrap;
 }
 
 #c-title {

@@ -4,6 +4,7 @@
 import * as Plot from "@observablehq/plot";
 import * as d3 from "d3";
 import {
+  bearingAt,
   fitDomains,
   gPoints,
   pointAt,
@@ -12,6 +13,7 @@ import {
   type Edges,
   type Lap,
   type Range,
+  type Refline,
   type Series,
 } from "./data";
 
@@ -80,15 +82,26 @@ function asChart(plot: (SVGSVGElement | HTMLElement) & Plot.Plot): Chart {
 }
 
 const ROAD_FILL = "#ececec";
+/** 全体のコース図で、ミニセクターの損失の色で塗った路面の不透明度。濃い赤の上でも周の線が読めるよう少し透かす */
+const PAINT_OPACITY = 0.75;
+
+/** ミニセクターごとの色（境界は s [m]）。null の区間は塗らない */
+export interface Paint {
+  bounds: number[];
+  color: (string | null)[];
+}
 const EDGE_STROKE = "#a8a8a8";
 const REFLINE_STROKE = "#c4c4c4";
+
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 /**
  * コースの路面（左右の端の間を薄く塗った面）と端の細い線。周の線より先に（下に）置く。
  * `idx` は基準線の格子の添字。null なら 1 周全体を閉じた輪として描く（左右の輪を evenodd で塗り、間だけを面にする）。
  * `idx` があればその範囲の左の端を進み、右の端を戻る 1 つの多角形にする。
+ * `paint` があれば、ミニセクターごとの路面をその色で塗り重ねる（全体のコース図の損失の色）。
  */
-function roadMarks(edges: Edges | null, idx: number[] | null): Plot.Markish[] {
+function roadMarks(line: Refline, edges: Edges | null, idx: number[] | null, paint: Paint | null = null): Plot.Markish[] {
   if (!edges) return [];
   const { left, right } = edges;
   const ii = idx ?? d3.range(left.x.length);
@@ -100,11 +113,31 @@ function roadMarks(edges: Edges | null, idx: number[] | null): Plot.Markish[] {
     const fy = scales.y!;
     const ring = (pts: (readonly [number, number])[]) =>
       "M" + pts.map(([x, y]) => `${fx(x)},${fy(y)}`).join("L") + "Z";
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const g = document.createElementNS(SVG_NS, "g");
+    const path = document.createElementNS(SVG_NS, "path");
     path.setAttribute("d", idx == null ? ring(l) + ring(r) : ring([...l, ...[...r].reverse()]));
     path.setAttribute("fill", ROAD_FILL);
     path.setAttribute("fill-rule", "evenodd");
-    return path;
+    g.append(path);
+    // ミニセクターの路面：境界の s の間の左の端を進み、右の端を戻る多角形。隣と境界の点を共有するので隙間はできない
+    paint?.color.forEach((color, k) => {
+      if (color == null) return;
+      const [s0, s1] = [paint.bounds[k]!, paint.bounds[k + 1]!];
+      const jj = line.s.flatMap((s, i) => (s >= s0 && s <= s1 ? [i] : []));
+      if (jj.length < 2) return;
+      const pl = jj.map((i) => [left.x[i]!, left.y[i]!] as const);
+      const pr = jj.map((i) => [right.x[i]!, right.y[i]!] as const);
+      const sector = document.createElementNS(SVG_NS, "path");
+      sector.setAttribute("d", ring([...pl, ...pr.reverse()]));
+      sector.setAttribute("fill", color);
+      sector.setAttribute("fill-opacity", String(PAINT_OPACITY));
+      // 隣の多角形との境目に背景の白い筋が出ないよう、同じ色の細い縁を付ける
+      sector.setAttribute("stroke", color);
+      sector.setAttribute("stroke-opacity", String(PAINT_OPACITY));
+      sector.setAttribute("stroke-width", "0.5");
+      g.append(sector);
+    });
+    return g;
   };
   const edgeLine = (pts: (readonly [number, number])[]) => {
     const closed = idx == null ? [...pts, pts[0]!] : pts;
@@ -131,12 +164,12 @@ export function courseMap(
   laps: Lap[],
   style: (lap: Lap) => LapStyle,
   height: number,
-  /** 基準線をミニセクターごとに塗る色。null なら灰色の 1 本 */
-  paint: { bounds: number[]; color: (string | null)[] } | null = null,
+  /** 路面をミニセクターごとに塗る色。null なら塗らない */
+  paint: Paint | null = null,
 ): Chart {
   const { refline: line } = doc;
-  // ミニセクターごとに基準線を 1 m 刻みでたどった点。両端を共有させ、つなぎ目に隙間を作らない
-  const painted = paint
+  // コースの端がないときだけ、基準線に沿った太い帯で塗る。1 m 刻みでたどり、両端を共有させてつなぎ目に隙間を作らない
+  const painted = paint && !doc.edges
     ? paint.color.flatMap((color, i) => {
         if (color == null) return [];
         const pts = d3.range(paint.bounds[i]!, paint.bounds[i + 1]! + 1).map((s) => ({ ...pointAt(line, s), i, color }));
@@ -167,12 +200,19 @@ export function courseMap(
       x: { domain: [x0 - pad, x1 + pad], axis: null },
       y: { domain: [y0 - pad, y1 + pad], axis: null },
       marks: [
-        // ミニセクターの色は路面より太い帯にして路面の下に置き、路面の縁取りとして見せる
         Plot.line(painted, { x: "x", y: "y", z: "i", stroke: "color", strokeWidth: 9 }),
-        ...roadMarks(doc.edges, null),
+        // 損失の色は路面そのものを塗る。周の線と重ねても、色の帯が線を隠さない
+        ...roadMarks(line, doc.edges, null, paint),
         // 基準線は実車の周の平均で、コースの中心ではない。路面と紛れないよう細い線にする
         Plot.line(line.x, { x: Plot.identity, y: line.y, stroke: REFLINE_STROKE, strokeWidth: 1 }),
-        ...laps.map((lap) => Plot.line(lap.x, { x: Plot.identity, y: lap.y, ...style(lap) })),
+        // 損失の色で塗ったときは、周の線に白い縁取りを付けて赤い路面から浮かせる
+        ...laps.flatMap((lap) => {
+          const st = style(lap);
+          const casing = paint
+            ? [Plot.line(lap.x, { x: Plot.identity, y: lap.y, stroke: "white", strokeWidth: st.strokeWidth + 2 })]
+            : [];
+          return [...casing, Plot.line(lap.x, { x: Plot.identity, y: lap.y, ...st })];
+        }),
         Plot.dot(ticks, { x: "x", y: "y", symbol: "plus", stroke: "black", r: 4 }),
         Plot.text(ticks, { x: "x", y: "y", text: (d) => `${d.s}`, dx: 6, dy: -8, textAnchor: "start" }),
         Plot.text(apexes, {
@@ -314,8 +354,79 @@ export function ggChart(laps: Lap[], style: (lap: Lap) => LapStyle, range: Range
 }
 
 /**
+ * 点の上に置くラベルの縦の位置（SVG の y、ラベルの中心）。重なるラベルは上へずらす。
+ * 画面の下にある点から順に置き、すでに置いたラベルと幅 `w`・高さ `h` の枠が重なれば、その上に積む。
+ * 点の位置 `pts` は px。返す配列は `pts` と同じ順。
+ */
+export function stackLabels(pts: { x: number; y: number }[], w: number, h: number, gap: number): number[] {
+  const out: number[] = new Array<number>(pts.length);
+  const placed: { x: number; y: number }[] = [];
+  const order = d3.range(pts.length).sort((a, b) => pts[b]!.y - pts[a]!.y);
+  for (const i of order) {
+    const p = pts[i]!;
+    let y = p.y - gap;
+    // 積むと別のラベルに当たることがあるので、当たらなくなるまで繰り返す（置いたラベルの数で止まる）
+    for (let k = 0; k <= placed.length; k++) {
+      const hit = placed.filter((q) => Math.abs(q.x - p.x) < w && Math.abs(q.y - y) < h);
+      if (hit.length === 0) break;
+      y = Math.min(...hit.map((q) => q.y)) - h;
+    }
+    out[i] = y;
+    placed.push({ x: p.x, y });
+  }
+  return out;
+}
+
+/** ボトム速度のラベルの枠 [px]：3 桁の太字 11 px に白い縁取りを足した幅と、行の高さ */
+const VMIN_LABEL = { w: 26, h: 13, gap: 11 };
+
+/**
+ * ボトム速度の数字。点の真上に置き、重なる数字は上に積んで点と細い引き出し線で結ぶ。
+ * Plot.text の dy は印ごとに 1 つなので、px を見て位置を決める描画関数にする。
+ */
+function vminLabels(bottoms: { x: number; y: number; v: number; color: string }[]): Plot.RenderFunction {
+  return (_index, scales) => {
+    const fx = scales.x!;
+    const fy = scales.y!;
+    const pts = bottoms.map((b) => ({ x: fx(b.x), y: fy(b.y) }));
+    const ys = stackLabels(pts, VMIN_LABEL.w, VMIN_LABEL.h, VMIN_LABEL.gap);
+    const g = document.createElementNS(SVG_NS, "g");
+    // 引き出し線を先に描き、数字の白い縁取りで線の上を覆う
+    bottoms.forEach((b, i) => {
+      const p = pts[i]!;
+      const y = ys[i]!;
+      if (p.y - y <= VMIN_LABEL.gap + 0.5) return;
+      const ln = document.createElementNS(SVG_NS, "line");
+      for (const [k, v] of Object.entries({ x1: p.x, y1: p.y - 4, x2: p.x, y2: y + VMIN_LABEL.h / 2 - 2 })) {
+        ln.setAttribute(k, String(v));
+      }
+      ln.setAttribute("stroke", b.color);
+      ln.setAttribute("stroke-width", "1");
+      g.append(ln);
+    });
+    bottoms.forEach((b, i) => {
+      const t = document.createElementNS(SVG_NS, "text");
+      t.setAttribute("x", String(pts[i]!.x));
+      t.setAttribute("y", String(ys[i]!));
+      t.setAttribute("dy", "0.32em");
+      t.setAttribute("text-anchor", "middle");
+      t.setAttribute("font-size", "11");
+      t.setAttribute("font-weight", "bold");
+      t.setAttribute("fill", b.color);
+      t.setAttribute("stroke", "white");
+      t.setAttribute("stroke-width", "3");
+      t.setAttribute("paint-order", "stroke");
+      t.textContent = b.v.toFixed(0);
+      g.append(t);
+    });
+    return g;
+  };
+}
+
+/**
  * コーナーの拡大図。s の範囲 `win` の路面（コースの端があれば）・基準線（細い破線）と、重ねる周の走行ラインを同じ縮尺で描く。
  * 区間の始点・終点に印を付け、各周のボトム速度（corner_stats の s_vmin）の位置に点と速度を出す。
+ * ブレーキ開始点の三角は、その s での基準線の進む向きを指す。
  */
 export function cornerMap(
   doc: CourseData,
@@ -360,13 +471,13 @@ export function cornerMap(
   const brakes = laps.flatMap((l) => {
     const s = l.corner_stats?.[ci]?.s_brake;
     if (s == null || l.x[s] == null || l.y[s] == null) return [];
-    return [{ lap: l, x: l.x[s]!, y: l.y[s]! }];
+    return [{ lap: l, x: l.x[s]!, y: l.y[s]!, bearing: bearingAt(line, s) }];
   });
   const bottoms = laps.flatMap((l) => {
     const st = l.corner_stats?.[ci];
     const s = st?.s_vmin;
     if (s == null || l.x[s] == null || l.y[s] == null) return [];
-    return [{ lap: l, x: l.x[s]!, y: l.y[s]!, v: st!.v_min! }];
+    return [{ lap: l, x: l.x[s]!, y: l.y[s]!, v: st!.v_min!, color: style(l).stroke }];
   });
   // 走る向き：区間の始点の少し手前から始点への矢印
   const a = pointAt(line, Math.max(win[0], corner.s_start - 15));
@@ -379,7 +490,7 @@ export function cornerMap(
       x: { domain: dom.x, axis: null },
       y: { domain: dom.y, axis: null },
       marks: [
-        ...roadMarks(doc.edges, idx),
+        ...roadMarks(line, doc.edges, idx),
         // 基準線は実車の周の平均で、コースの中心ではない。路面と紛れないよう細い線にする
         Plot.line(rx, { x: Plot.identity, y: ry, stroke: REFLINE_STROKE, strokeWidth: 1, strokeDasharray: "4,3" }),
         Plot.arrow([{ a, b }], {
@@ -408,23 +519,13 @@ export function cornerMap(
           y: "y",
           r: 6,
           symbol: "triangle",
-          rotate: 180,
+          // 三角の頂点は既定で上（北）を指す。rotate は時計回りの角度なので、方位をそのまま渡す
+          rotate: "bearing",
           fill: (d) => style(d.lap).stroke,
           stroke: "white",
         }),
         Plot.dot(bottoms, { x: "x", y: "y", r: 4, fill: (d) => style(d.lap).stroke, stroke: "white" }),
-        Plot.text(bottoms, {
-          x: "x",
-          y: "y",
-          text: (d) => `${d.v.toFixed(0)}`,
-          dy: -10,
-          fill: (d) => style(d.lap).stroke,
-          fontSize: 11,
-          fontWeight: "bold",
-          stroke: "white",
-          strokeWidth: 3,
-          paintOrder: "stroke",
-        }),
+        vminLabels(bottoms),
       ],
     }),
   );

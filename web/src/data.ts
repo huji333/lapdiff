@@ -334,3 +334,41 @@ export function sectorTimes(lap: Lap, bounds: number[]): (number | null)[] {
   }
   return out;
 }
+
+/**
+ * 基準線の s での進む向き。北を 0°、東を 90° として時計回りの角度 [°]（-180〜180）。
+ * s の前後 `half` [m] の点を結んだ向きで、GPS の細かい揺れを拾わないようにする。
+ */
+export function bearingAt(line: Refline, s: number, half = 3): number {
+  const a = pointAt(line, s - half);
+  const b = pointAt(line, s + half);
+  if (a.x === b.x && a.y === b.y) throw new Error(`s = ${s} で基準線の向きが決まらない`);
+  return (Math.atan2(b.x - a.x, b.y - a.y) * 180) / Math.PI;
+}
+
+/** コーナーの向きを決めるのに要る、区間全体で向きが変わる角度の下限 [°] */
+export const TURN_MIN_DEG = 30;
+
+/**
+ * コーナーの区間 s_start〜s_end で基準線の向きが変わる角度の合計 [°]。左に曲がると正。
+ * 1 m ごとの向きの差を足すので、180° を超えるヘアピンでも符号を取り違えない。
+ */
+export function turnAngle(line: Refline, c: Corner): number {
+  let total = 0;
+  let prev = bearingAt(line, c.s_start);
+  for (let s = c.s_start + 1; s <= c.s_end; s++) {
+    const h = bearingAt(line, s);
+    // 方位は時計回りなので、左に曲がると減る。差を -180〜180 に収めてから符号を反転する
+    const d = ((h - prev + 540) % 360) - 180;
+    total -= d;
+    prev = h;
+  }
+  return total;
+}
+
+/** コーナーの向き：左なら 1、右なら -1。向きの変わりが TURN_MIN_DEG 未満なら null（向きを決めない） */
+export function turnSide(line: Refline, c: Corner): 1 | -1 | null {
+  const a = turnAngle(line, c);
+  if (Math.abs(a) < TURN_MIN_DEG) return null;
+  return a > 0 ? 1 : -1;
+}

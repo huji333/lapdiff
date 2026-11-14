@@ -1,8 +1,11 @@
 // コーナーのビュー：1 つのコーナーの前後を拡大して、ライン取りを周どうしで比べる。
 //
-// - 拡大図：基準線（太い灰色）と各周の走行ライン。各周のボトム速度の位置に点と km/h を出す。
-// - 距離×横のずれ（基準線から左が正）と距離×速度を、コーナーの前後の範囲だけ描く。
+// - 拡大図：路面、基準線（細い破線）と各周の走行ライン。各周のボトム速度の位置に点と km/h を出す。
+//   幅は列の幅に合わせる（呼ぶ側が測って渡す）。
+// - 距離×横のずれと距離×速度を、コーナーの前後の範囲だけ描く。
 //   横のずれで「どこで外に振り、どこで寄せたか」、速度で「その結果どこまで落ちたか」を同じ s で見る。
+//   横のずれは、そのコーナーの内側（基準線の向きの変わりから決める）を正にし、上ほどイン寄りと読めるようにする。
+//   前後 PAD m に隣の逆向きのコーナーがかかっても、正の向きはこのコーナーの内側のまま変えない。軸の名前に左右を書く。
 // - G-G 図：その範囲の軌跡を濃く描く（周全体は薄く）。
 // - 距離×前後G：ブレーキ開始点のしきい値（brake_g）を破線で引く。各周のブレーキ開始点は、どの距離のグラフにも周の色の縦の破線で示す。
 // - 距離×ペダル：アクセルを上、ブレーキを下に [%]。ペダルを記録している周（AC）だけ描く。
@@ -14,11 +17,19 @@
 import * as Plot from "@observablehq/plot";
 import { attachDistance, drawDots, gAt, Link, xyAt } from "./brush";
 import { cornerMap, distanceChart, gDomain, ggChart, type Chart, type LapStyle } from "./charts";
-import { cornerWindow, hasPedals, pedalSeries, type Corner, type CourseData, type Lap, type Range } from "./data";
+import {
+  cornerWindow,
+  hasPedals,
+  pedalSeries,
+  turnSide,
+  type Corner,
+  type CourseData,
+  type Lap,
+  type Range,
+} from "./data";
 
 /** コーナーの区間の前後に足して描く距離 [m] */
 const PAD = 80;
-const MAP_WIDTH = 620;
 const PLOT_WIDTH = 640;
 const PLOT_HEIGHT = 190;
 
@@ -48,6 +59,7 @@ export function renderCorner(
   style: (lap: Lap) => LapStyle,
   swatch: (style: LapStyle) => SVGSVGElement,
   link: Link,
+  mapWidth: number,
   mapHeight: number,
 ): void {
   const ci = doc.corners!.findIndex((c) => c.id === corner.id);
@@ -70,7 +82,7 @@ export function renderCorner(
   }
 
   const color = (l: Lap) => style(l).stroke;
-  const map = cornerMap(doc, laps, style, corner, win, MAP_WIDTH, mapHeight);
+  const map = cornerMap(doc, laps, style, corner, win, mapWidth, mapHeight);
   els.map.replaceChildren(map.svg);
 
   const brakeRules = brakes.map((b) =>
@@ -84,11 +96,22 @@ export function renderCorner(
     xDomain: win,
     extra: brakeRules,
   };
-  const offset = distanceChart(doc, laps.map((lap) => ({ lap, values: lap.offset })), style, {
-    ...opts,
-    zero: true,
-    yLabel: "横のずれ [m]（基準線から左が正）",
-  });
+  // offset は進む向きの左が正。右のコーナーでは符号を反転して内側を正にする。向きが決まらなければ左を正のまま描く
+  const side = turnSide(doc.refline, corner);
+  const inward = side ?? 1;
+  const offset = distanceChart(
+    doc,
+    laps.map((lap) => ({ lap, values: lap.offset.map((v) => (v == null ? null : inward * v)) })),
+    style,
+    {
+      ...opts,
+      zero: true,
+      yLabel:
+        side == null
+          ? "横のずれ [m]（基準線から左が正）"
+          : `横のずれ [m]（${corner.id} の内側＝${side === 1 ? "左" : "右"}が正）`,
+    },
+  );
   els.offset.replaceChildren(offset.svg);
   attachDistance(offset, "offset", link);
   const speed = distanceChart(doc, laps.map((lap) => ({ lap, values: lap.speed_kmh })), style, {

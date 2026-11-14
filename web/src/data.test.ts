@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  bearingAt,
+  turnAngle,
+  turnSide,
   bestPool,
   lossVsBest,
   miniBounds,
@@ -234,5 +237,44 @@ describe("区間の自己ベスト", () => {
   it("区間に欠けがあれば null", () => {
     const l = lap("a", [0, 1, 2, null, 4, 5]);
     expect(sectorTimes(l, [0, 2, 5])).toEqual([2, null]);
+  });
+});
+
+/** 中心 (0, 0)・半径 r の円弧を 1 m 刻みでたどる基準線。dir = 1 なら左回り（反時計回り） */
+function arc(r: number, len: number, dir: 1 | -1): Refline {
+  const s = Array.from({ length: len + 1 }, (_, i) => i);
+  // 左回りは (r, 0) から北へ、右回りは (-r, 0) から北へ進み始める
+  const x = s.map((v) => dir * r * Math.cos(v / r));
+  const y = s.map((v) => r * Math.sin(v / r));
+  return { s, x, y };
+}
+
+describe("bearingAt", () => {
+  it("北が 0°、東が 90°（時計回り）", () => {
+    const north: Refline = { s: [0, 1, 2, 3, 4, 5, 6, 7], x: [0, 0, 0, 0, 0, 0, 0, 0], y: [0, 1, 2, 3, 4, 5, 6, 7] };
+    const east: Refline = { s: [0, 1, 2, 3, 4, 5, 6, 7], x: [0, 1, 2, 3, 4, 5, 6, 7], y: [0, 0, 0, 0, 0, 0, 0, 0] };
+    expect(bearingAt(north, 3)).toBeCloseTo(0, 9);
+    expect(bearingAt(east, 3)).toBeCloseTo(90, 9);
+  });
+});
+
+describe("turnAngle・turnSide", () => {
+  const corner = (s_start: number, s_end: number) => ({ id: "T", name: "", s_start, s_end, s_apex: null });
+
+  it("左回りは正、右回りは負。180° を超えるヘアピンでも符号を保つ", () => {
+    // 半径 20 m で 250°（約 87 m）回る
+    const len = Math.round((20 * 250 * Math.PI) / 180);
+    const left = arc(20, len + 10, 1);
+    const right = arc(20, len + 10, -1);
+    expect(turnAngle(left, corner(5, 5 + len))).toBeCloseTo(250, -1);
+    expect(turnAngle(right, corner(5, 5 + len))).toBeCloseTo(-250, -1);
+    expect(turnSide(left, corner(5, 5 + len))).toBe(1);
+    expect(turnSide(right, corner(5, 5 + len))).toBe(-1);
+  });
+
+  it("向きの変わりが小さければ向きを決めない", () => {
+    const gentle = arc(400, 200, 1);
+    // 100 m / 400 m ≈ 14°
+    expect(turnSide(gentle, corner(50, 150))).toBeNull();
   });
 });
