@@ -5,7 +5,7 @@
 
 import "./style.css";
 import { attachDistance, attachMap, drawDots, gAt, Link } from "./brush";
-import { renderCorner } from "./corner";
+import { clearCorner, renderCorner } from "./corner";
 import { LOSS_RAMP, lossColor, lossLegend, miniLosses, renderPanel, setupPanel } from "./sections";
 import {
   courseMap,
@@ -295,7 +295,10 @@ function renderCharts(state: State, doc: CourseData, d: Derived): void {
     link.reset();
     const corner = cornersOf(doc).find((c) => c.id === state.corner);
     if (!corner || !d.corner) {
-      message(ui.corner.map, "このコースには corners.toml がないので、コーナーのビューは出せない");
+      cornerLink.reset();
+      ui.corner.title.textContent = "";
+      ui.cornerLegend.replaceChildren();
+      clearCorner(ui.corner, "このコースには corners.toml がないので、コーナーのビューは出せない");
       return;
     }
     renderLegend(ui.cornerLegend, d);

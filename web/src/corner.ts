@@ -60,9 +60,7 @@ export function renderCorner(
 
   link.reset();
   if (laps.length === 0) {
-    for (const e of [els.map, els.offset, els.speed, els.ax, els.pedal, els.gg]) e.replaceChildren();
-    message(els.map, PICK_LAPS);
-    els.table.replaceChildren();
+    clearCorner(els, PICK_LAPS);
     return;
   }
 
@@ -149,6 +147,13 @@ export function renderCorner(
   });
 
   renderTable(els.table, doc, laps, table, style);
+}
+
+/** コーナーの図と表を消し、拡大図の場所に `text` を出す。前に描いたコーナーを残さない */
+export function clearCorner(els: CornerEls, text: string): void {
+  for (const e of [els.map, els.offset, els.speed, els.ax, els.pedal, els.gg]) e.replaceChildren();
+  els.table.replaceChildren();
+  message(els.map, text);
 }
 
 /** 表の列。基準の行は値、ほかの行は基準との差（基準にその値がある列だけ） */
