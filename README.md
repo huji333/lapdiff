@@ -24,6 +24,17 @@ uv run python -m ingest.track <racechrono csv> <course>          # track/<course
 uv run python -m ingest.ac_transform <acraw.gz> <course>          # track/<course>/ac_transform.toml
 ```
 
+## 分析
+
+```sh
+uv run python -m ingest.racechrono <csv> data/      # data/<source>/<session_id>/telemetry.parquet
+LAPDIFF_DATA=data uv run marimo edit analysis/view1.py
+```
+
+- データの場所は環境変数 `LAPDIFF_DATA` で指定する。指定しなければリポジトリ直下の `data/` を読む。ノートブックの「データの場所」の欄でも変えられる
+- `data/` と `*.parquet` は git に入れない（`.gitignore`）
+- ビュー 1（`analysis/view1.py`）：コース図と、距離×速度・距離×タイム差（基準ラップとの累積タイム差）。既定では有効な周を全部重ね、基準ラップは実車の有効な周のうち最速の周にする。コース図で矩形を、距離のグラフで横の範囲をドラッグすると、もう一方の同じ区間が強調される
+
 ## collector の実行（Windows）
 
 ```bat
