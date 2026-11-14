@@ -36,7 +36,8 @@ from ingest import ac_struct
 from ingest.ac_transform import TRACK_DIR, ac_plane, load_transform
 from ingest.derive import derive
 from ingest.laps import lap_table
-from ingest.schema import COMMON_SCHEMA, JOIN_KEYS, write_session
+from ingest.schema import JOIN_KEYS, TIMED_COLUMNS, to_common, write_session
+from ingest.track import load_refline
 
 SOURCE = "ac"
 MAGIC = b"ACRAW\0\0\0"
@@ -174,14 +175,18 @@ def _flatten(prefix: str, recs: np.ndarray) -> dict[str, np.ndarray]:
 @dataclass(frozen=True)
 class Session:
     common: pl.DataFrame
+    timed: pl.DataFrame  # 周ごとの 10 Hz の格子（`ingest.schema.TIMED_COLUMNS`）
     raw: pl.DataFrame
     laps: pl.DataFrame
     capture: AcCapture
+    dropped: dict[str, int]  # 距離の格子に使わなかった点（`ingest.derive.by_distance`）
 
 
 def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
     cap = read_acraw(path)
-    sim = load_transform(cap.static_str("track"), cap.static_str("trackConfiguration"), track_dir)
+    course_dir, sim = load_transform(
+        cap.static_str("track"), cap.static_str("trackConfiguration"), track_dir
+    )
     session_id = datetime.fromtimestamp(cap.start_unix_ns / 1e9, UTC).strftime("%Y%m%dT%H%M%SZ")
 
     starts = lap_starts(cap)
@@ -217,21 +222,16 @@ def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
     d = derive(t, xy[:, 0], xy[:, 1], p["speedKmh"].astype(np.float64) / 3.6)
     tg = d["t"].to_numpy()
     lap_g = lap_of(tg)
-    common = (
-        d.with_columns(
-            source=pl.lit(SOURCE),
-            session_id=pl.lit(session_id),
-            lap=pl.Series(lap_g, dtype=pl.Int64),
-            t=pl.Series(tg - t_start[np.searchsorted(lap_ids, lap_g)]),
-            steer=pl.Series(np.interp(tg, t, p["steerAngle"])),
-            throttle=pl.Series(np.interp(tg, t, p["gas"])),
-            brake=pl.Series(np.interp(tg, t, p["brake"])),
-        )
-        .join(laps.select("lap", "lap_valid"), on="lap", how="left", maintain_order="left")
-        .select(COMMON_SCHEMA.names())
-    )
-    return Session(common=common, raw=raw.select(*JOIN_KEYS, pl.exclude(JOIN_KEYS)),
-                   laps=laps, capture=cap)
+    timed = d.with_columns(
+        lap=pl.Series(lap_g, dtype=pl.Int64),
+        t=pl.Series(tg - t_start[np.searchsorted(lap_ids, lap_g)]),
+        steer=pl.Series(np.interp(tg, t, p["steerAngle"])),
+        throttle=pl.Series(np.interp(tg, t, p["gas"])),
+        brake=pl.Series(np.interp(tg, t, p["brake"])),
+    ).select(TIMED_COLUMNS)
+    common, dropped = to_common(timed, laps, load_refline(course_dir), SOURCE, session_id)
+    return Session(common=common, timed=timed, raw=raw.select(*JOIN_KEYS, pl.exclude(JOIN_KEYS)),
+                   laps=laps, capture=cap, dropped=dropped)
 
 
 def main(argv: list[str]) -> None:
@@ -245,6 +245,7 @@ def main(argv: list[str]) -> None:
         f"AC {c.static_str('acVersion')}、smVersion {c.dtypes.sm_version}、"
         f"{len(c.host_time_ns)} レコード、packetId の飛び {c.n_packet_gaps} 件"
     )
+    print(f"距離の格子に使わなかった 10 Hz の点: {s.dropped}")
     if c.truncated:
         print(f"gzip の末尾がない（.part）。途中で切れたレコード {c.n_dropped_bytes} バイトを捨てた")
     with pl.Config(tbl_rows=-1):

@@ -71,8 +71,11 @@ def test_common_schema(session):
     assert (c["source"] == "ac").all()
     assert c["session_id"].unique().to_list() == ["20261114T033002Z"]
     lap2 = c.filter(pl.col("lap") == 2)
-    assert lap2["t"].min() == pytest.approx(0, abs=0.1)
-    assert lap2["t"].max() == pytest.approx(127.888, abs=0.1)
+    # 基準線の距離 1 m 刻みで 1 周分
+    np.testing.assert_allclose(np.diff(lap2["s"].to_numpy()), 1.0)
+    assert lap2["s"].min() <= 1 and lap2["s"].max() >= 3690
+    assert lap2["t"].min() == pytest.approx(0, abs=0.2)
+    assert lap2["t"].max() == pytest.approx(127.888, abs=0.3)
     assert lap2["lap_valid"].all()
     for col in ("steer", "throttle", "brake", "ax"):
         assert c[col].null_count() == 0
@@ -96,7 +99,7 @@ def test_derived_g_matches_ac_accelerometer(session):
     座標の向き（(x, -z) で右手系）、座標変換、派生チャンネルの計算をまとめて確かめる。
     accG[0] は左旋回で正（kappa と同じ向き）、accG[2] は加速で正。
     """
-    c = session.common.filter((pl.col("lap") == 2) & pl.col("ay").is_not_null())
+    c = session.timed.filter((pl.col("lap") == 2) & pl.col("ay").is_not_null())
     r = session.raw.filter(pl.col("lap") == 2)
 
     def acc(i):
@@ -110,17 +113,13 @@ def test_derived_g_matches_ac_accelerometer(session):
 
 
 def test_transformed_line_on_real_track(session):
-    """変換後の AC の軌跡が、実車の lap 2 から数 m 以内にある（ac_transform.toml の推定元）。"""
-    from scipy.spatial import cKDTree
+    """変換後の AC の軌跡が、基準線から数 m 以内にある（ac_transform.toml の推定元）。"""
+    from ingest.track import TRACK_DIR, lap_s, load_refline
 
-    from ingest import racechrono
-
-    rc = racechrono.ingest(ROOT / "fixtures/racechrono/okayama_laps1-2.csv").common
-    rc2 = rc.filter(pl.col("lap") == 2)
-    ac2 = session.common.filter(pl.col("lap") == 2)
-    dist, _ = cKDTree(np.c_[rc2["x"], rc2["y"]]).query(np.c_[ac2["x"], ac2["y"]])
-    assert np.median(dist) < 3
-    assert dist.max() < 10
+    ac2 = session.timed.filter(pl.col("lap") == 2)
+    _, dist = lap_s(np.c_[ac2["x"], ac2["y"]], load_refline(TRACK_DIR / "okayama"))
+    assert np.median(dist) < 2
+    assert dist.max() < 8
 
 
 def test_write_session(session, tmp_path):
@@ -146,6 +145,10 @@ def test_fit_similarity_recovers_known_transform():
 
 def test_ac_plane_is_x_minus_z():
     np.testing.assert_array_equal(ac_plane(np.array([[1.0, 5.0, 2.0]])), [[1.0, -2.0]])
+
+
+def test_no_points_dropped(session):
+    assert session.dropped == {"off_line": 0, "not_advancing": 0}
 
 
 def test_unknown_track_fails():
