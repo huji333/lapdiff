@@ -40,6 +40,8 @@ const ui = {
   selChip: el<HTMLButtonElement>("sel-chip"),
   error: el<HTMLDivElement>("error"),
   attribution: el<HTMLParagraphElement>("attribution"),
+  lapsSection: el<HTMLElement>("laps-section"),
+  lapsHost: { overview: el<HTMLElement>("dist-main"), corner: el<HTMLElement>("c-dist-col") },
   map: el<HTMLDivElement>("map"),
   mapLegend: el<HTMLDivElement>("map-legend"),
   readout: el<HTMLDivElement>("readout"),
@@ -76,8 +78,8 @@ const ui = {
 
 /** コース図の高さの下限 [px]。これより低い画面ではページごとスクロールする */
 const MAP_MIN_HEIGHT = 500;
-/** コース図の下に空ける幅 [px] */
-const MAP_BOTTOM_GAP = 8;
+/** コース図の下に空ける幅 [px]。style.css の .page の下の padding と同じにし、最下部までスクロールしても図の列が押し上げられないようにする */
+const MAP_BOTTOM_GAP = 16;
 
 /**
  * 線と損失の色の正は TS の定数（charts.ts、sections.ts）。SVG に塗る値と同じ色を CSS（基準の行の背景、
@@ -185,6 +187,10 @@ function renderToolbar(state: State, doc: CourseData, d: Derived): void {
 
   ui.viewOverview.hidden = state.view !== "overview";
   ui.viewCorner.hidden = state.view !== "corner";
+  // 周の一覧は今のビューの右の列の末尾に置く。ビューの外（ページの最下部）に置くと、最下部までスクロールしたとき
+  // 貼り付いた図の列がビューの終わりに押し上げられ、上の端がツールバーの下に隠れる
+  const host = ui.lapsHost[state.view];
+  if (ui.lapsSection.parentElement !== host) host.append(ui.lapsSection);
   for (const a of ui.tabs) {
     if (a.dataset.view === state.view) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
@@ -250,16 +256,22 @@ function renderPicker(kind: Role, laps: (Lap | null)[], current: Lap | null, sta
   );
 }
 
-/** 選んだ区間のチップ。今のビューで区間を選んでいるときだけ出し、押すと解除する */
+/**
+ * 選んだ区間のチップ。今のビューで区間を選んでいるときだけ見せ、押すと解除する。
+ * 隠すときも場所は残す（style.css の .off）ので、選択の出し入れでツールバーの高さも部品の位置も変わらない
+ */
 function renderSelChip(): void {
   const sel = activeLink().selection;
-  ui.selChip.hidden = sel == null;
-  if (!sel) return;
+  ui.selChip.classList.toggle("off", sel == null);
+  if (!sel) {
+    ui.selChip.textContent = "";
+    return;
+  }
   const [a, b] = [...sel.range].sort((x, y) => x - y).map(Math.round);
   ui.selChip.textContent = `s ${a}–${b} m ✕`;
 }
 
-/** ツールバーの高さを CSS（貼り付ける列の top）に渡す。折り返しやチップの出し入れで変わる */
+/** ツールバーの高さを CSS（貼り付ける列の top）に渡す。折り返し（画面の幅）やコーナーの段の出し入れで変わる */
 function syncHeaderHeight(): void {
   document.documentElement.style.setProperty("--header-h", `${ui.header.offsetHeight}px`);
 }
@@ -546,7 +558,8 @@ async function main(): Promise<void> {
   window.addEventListener("hashchange", () => {
     if (doc && state) update(route(doc, state.corner));
   });
-  // 選んだ区間のチップが出て折り返したときなど、描き直しなしでツールバーの高さが変わったときに追う
+  // 描き直しを伴わずにツールバーの高さが変わったとき（書体の読み込みなど）も、貼り付ける列の top を追う。
+  // コース図の高さは描き直しでしか合わせない。選択のチップは場所を取ったままなので、選択では高さが変わらない
   new ResizeObserver(syncHeaderHeight).observe(ui.header);
   // コース図の高さを画面に合わせ直す。リサイズ中に何度も描き直さないよう、止まってから描く
   let resizeTimer: number | undefined;

@@ -14,6 +14,7 @@
           <a href="#corner" data-view="corner" title="コーナー（2）">コーナー</a>
         </nav>
         <select id="course" aria-label="コース"></select>
+        <button type="button" class="chip sel off" id="sel-chip" title="選択を解除（Esc）"></button>
         <span class="spacer"></span>
         <span class="pair">
           <button type="button" class="chip" id="ref-chip" popovertarget="ref-picker"></button>
@@ -24,7 +25,6 @@
           <button type="button" data-multi="false" title="基準と比較の 2 周">2 周</button>
           <button type="button" data-multi="true" title="一覧で選んだ周を重ねる">重ねる</button>
         </div>
-        <button type="button" class="chip sel" id="sel-chip" title="選択を解除（Esc）" hidden></button>
       </div>
       <div class="sub" id="corner-row" hidden>
         <button type="button" class="nav" id="corner-prev" title="前のコーナー（←）" aria-label="前のコーナー">‹</button>
@@ -55,7 +55,7 @@
             </div>
             <div class="fp-body" id="sp-body"></div>
           </aside>
-          <div class="dist-main">
+          <div class="dist-main" id="dist-main">
             <div id="legend" class="legend"></div>
             <div id="speed"></div>
             <div id="dt"></div>
@@ -70,7 +70,7 @@
         <section class="cmap-col">
           <div id="c-map"></div>
         </section>
-        <section class="dist-col">
+        <section class="dist-col" id="c-dist-col">
           <h2 id="c-title"></h2>
           <div id="c-legend" class="legend"></div>
           <div id="c-offset"></div>
@@ -83,12 +83,11 @@
           </div>
         </section>
       </main>
-      <section class="laps-section">
+      <!-- 周の一覧と出典。main.ts が今のビューの右の列の末尾に移す -->
+      <section class="laps-section" id="laps-section">
         <table id="laps"></table>
-      </section>
-      <footer>
         <p class="note" id="attribution" hidden></p>
-      </footer>
+      </section>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

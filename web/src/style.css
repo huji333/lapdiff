@@ -124,8 +124,16 @@ input[type="checkbox"] {
 }
 
 #toolbar .sub {
+  flex-wrap: nowrap;
+  align-items: flex-start;
   gap: 6px;
   padding-top: 0;
+}
+
+/* チップは中で折り返し、‹ › はその両端に残す */
+#toolbar .sub .corners {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 h1 {
@@ -206,11 +214,19 @@ h1 {
   color: var(--muted);
 }
 
-/* 選んだ区間。グラフの強調と同じ色 */
+/* 選んだ区間。グラフの強調と同じ色。
+   選択がないときも場所は取っておき（.off）、出し入れでツールバーのほかの部品が動いたり折り返したりしないようにする。
+   幅は 4 桁の s の範囲（「s 1000–2459 m ✕」）が入る分に固定する */
 .chip.sel {
+  justify-content: center;
+  min-width: 17ch;
   border-color: transparent;
   background: color-mix(in srgb, var(--select) 12%, var(--surface));
   color: var(--select);
+}
+
+.chip.sel.off {
+  visibility: hidden;
 }
 
 /* 周を選ぶポップオーバー。位置は main.ts がチップの下に合わせる */
@@ -471,7 +487,7 @@ main {
   background: var(--ref-bg);
 }
 
-/* 周の一覧はページの最下部に、控えめに出す */
+/* 周の一覧と出典は、今のビューの右の列の末尾に控えめに出す（main.ts が移す） */
 .laps-section {
   margin-top: 24px;
   font-size: 12px;
