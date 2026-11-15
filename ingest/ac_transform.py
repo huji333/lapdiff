@@ -13,6 +13,7 @@
 - スケールが 1 から `SCALE_TOLERANCE` 以上外れたら警告する。
 """
 
+import json
 import sys
 import tomllib
 import warnings
@@ -128,7 +129,8 @@ def transform_toml(
 ) -> str:
     """推定した変換を `find_transform` が読む toml の文字列にする。`header` はコメントの行。"""
     p50, p95, pmax = np.percentile(dist, [50, 95, 100])
-    keys = "".join(f'{k} = "{v}"\n' for k, v in match.items())
+    # JSON の文字列は TOML の基本文字列としても読める（" と \ をエスケープする）
+    keys = "".join(f"{k} = {json.dumps(v, ensure_ascii=False)}\n" for k, v in match.items())
     return f"""{header}{keys}scale = {sim.scale:.6f}
 rotation_deg = {sim.rotation_deg:.4f}
 tx = {sim.tx:.3f}

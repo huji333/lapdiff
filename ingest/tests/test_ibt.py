@@ -153,3 +153,36 @@ def test_truncated_file_fails(tmp_path):
 def test_unknown_track_fails(tmp_path):
     with pytest.raises(ValueError, match="iracing_transform.toml"):
         ibt.ingest(BEST, track_dir=tmp_path)
+
+
+def test_raw_laps_split_by_start_time(best):
+    """生チャンネルも開始時刻で周に分ける。周の数が変わった記録とは 1〜2 記録ずれるが、t は周の中に収まる。"""
+    raw9 = best.raw.filter(pl.col("lap") == 9)
+    lap_time = best.laps.filter(pl.col("lap") == 9)["lap_time"].item()
+    assert raw9["t"].min() >= 0 and raw9["t"].max() < lap_time
+    # 1007.2333 s の記録は LapCompleted が 8 のままだが、開始時刻 1007.222 s より後なので lap 9
+    assert raw9["ibt.LapCompleted"].to_list()[0] == 8
+
+
+def test_reset_at_end_or_before_garage_is_restored():
+    for completed in ([1, 2, 2, 0], [1, 2, 2, 0, -1, -1]):
+        lr = ibt.lap_records(np.array(completed))
+        assert lr.resets == [2]
+        assert lr.lap.tolist()[:4] == [1, 2, 2, 2]
+
+
+def test_empty_session_info_value(best):
+    r = ibt.Ibt(**{**best.ibt.__dict__, "session_info": "WeekendInfo:\n TrackConfigName:\n"})
+    assert r.info("TrackConfigName") == ""
+
+
+def test_transform_toml_escapes_names(tmp_path):
+    from ingest.ac_transform import Similarity, find_transform, transform_toml
+
+    match = {"iracing_track": 'a "quoted" \\ name', "iracing_config": ""}
+    d = tmp_path / "course"
+    d.mkdir()
+    (d / "x.toml").write_text(
+        transform_toml("# h\n", match, Similarity(1, 0, 0, 0), np.zeros(3), "f.ibt"), encoding="utf-8"
+    )
+    assert find_transform("x.toml", match, tmp_path)[0] == d

@@ -10,8 +10,8 @@
   セッション情報は YAML だが、使うのはこの 2 つだけなので行を直接読む。
 - 局所座標：`Lat`、`Lon` をコースの `origin.toml` の原点で ENU に移し、相似変換で基準線に合わせる。
 - ラップ：`LapCompleted` の値を `lap` とする（0 はアウトラップ）。
-  - ピットへのリセットでは `LapCompleted` が少しの間 0 になって元の値に戻る。0 の連なりの前後が同じ値 v（1 以上）なら、
-    その記録を v の周に戻し、v の周を閉じていない周にする（警告を出す）。
+  - ピットへのリセットでは `LapCompleted` が少しの間 0 になって元の値に戻る。0 の連なりの前が 1 以上の値 v で、
+    後ろが同じ値 v、記録の末尾、-1 のどれかなら、その記録を v の周に戻し、v の周を閉じていない周にする（警告を出す）。
   - -1 の記録（ガレージにいる間）はどの周にも入れず、件数を返す。
   - 1 増えた記録を計測線の通過とする。周の開始時刻は `lap_starts` で `LapCurrentLapTime` から求める
     （この値も更新が 20〜62 記録遅れる）。
@@ -47,7 +47,7 @@ from scipy.signal import savgol_filter
 
 from ingest.ac_transform import TRACK_DIR, find_transform, fit_similarity, transform_toml
 from ingest.derive import G, derive
-from ingest.laps import agrees_with_own_timing, lap_table, with_validity
+from ingest.laps import agrees_with_own_timing, lap_table
 from ingest.racechrono import to_enu
 from ingest.schema import JOIN_KEYS, TIMED_COLUMNS, to_common, write_session
 from ingest.track import load_refline
@@ -85,7 +85,8 @@ class Ibt:
 
     def info(self, key: str) -> str:
         """セッション情報の `WeekendInfo` 直下の値（`TrackName` など）。"""
-        found = re.findall(rf"^ {key}: (.*)$", self.session_info, flags=re.MULTILINE)
+        # 値が空のとき（`TrackConfigName:`）はコロンの後ろに空白がない
+        found = re.findall(rf"^ {key}:(.*)$", self.session_info, flags=re.MULTILINE)
         if len(found) != 1:
             raise ValueError(f"セッション情報の {key} が1つではない: {found}")
         return found[0].strip()
@@ -158,7 +159,9 @@ def lap_records(completed: np.ndarray) -> LapRecords:
     edges = np.flatnonzero(np.diff(zero))
     resets = []
     for a, b in zip(edges[::2], edges[1::2]):  # 0 の連なり [a, b)
-        if 0 < a and b < n and lap[a - 1] == lap[b] and lap[a - 1] >= 1:
+        # 0 の後ろが同じ値、記録の末尾、ガレージ（-1）のどれかならリセット
+        after = lap[b] if b < n else -1
+        if 0 < a and lap[a - 1] >= 1 and after in (lap[a - 1], -1):
             lap[a:b] = lap[a - 1]
             resets.append(int(lap[a - 1]))
     kept = lap[lap >= 0]
@@ -233,13 +236,14 @@ def _flatten(ibt: Ibt, keep: np.ndarray) -> dict[str, np.ndarray]:
     return cols
 
 
+def track_match(ibt: Ibt) -> dict[str, str]:
+    """`iracing_transform.toml` と照合する値。"""
+    return {"iracing_track": ibt.info("TrackName"), "iracing_config": ibt.info("TrackConfigName")}
+
+
 def course_xy(ibt: Ibt, track_dir: Path = TRACK_DIR) -> tuple[Path, np.ndarray]:
     """コースのディレクトリと、全記録の局所座標（基準線に合わせたもの、N×2）。"""
-    course_dir, sim = find_transform(
-        TRANSFORM_FILE,
-        {"iracing_track": ibt.info("TrackName"), "iracing_config": ibt.info("TrackConfigName")},
-        track_dir,
-    )
+    course_dir, sim = find_transform(TRANSFORM_FILE, track_match(ibt), track_dir)
     return course_dir, sim.apply(enu(ibt, course_dir))
 
 
@@ -247,6 +251,52 @@ def enu(ibt: Ibt, course_dir: Path) -> np.ndarray:
     origin = tomllib.loads((course_dir / "origin.toml").read_text(encoding="utf-8"))
     x, y = to_enu(ibt.col("Lat"), ibt.col("Lon"), origin["lat"], origin["lon"])
     return np.c_[x, y]
+
+
+@dataclass(frozen=True)
+class Laps:
+    keep: np.ndarray  # 周に入れる記録（LapCompleted が -1 でない）。ibt の記録と同じ長さの bool
+    t: np.ndarray  # keep した記録の SessionTime
+    table: pl.DataFrame  # 周の表（`lap_table` の列と `lap_time_own`）
+
+    def lap_of(self, t_abs: np.ndarray) -> np.ndarray:
+        """時刻の周。開始時刻で振り分ける（LapCompleted の値ではない）。最初の周の開始より前は最初の周に入れる。"""
+        t_start, ids = self.table["t_start"].to_numpy(), self.table["lap"].to_numpy()
+        return ids[np.maximum(np.searchsorted(t_start, t_abs, side="right") - 1, 0)]
+
+    def lap_time(self, t_abs: np.ndarray, lap: np.ndarray) -> np.ndarray:
+        """周の開始からの時刻。"""
+        t_start, ids = self.table["t_start"].to_numpy(), self.table["lap"].to_numpy()
+        return t_abs - t_start[np.searchsorted(ids, lap)]
+
+
+def split_laps(ibt: Ibt) -> Laps:
+    """記録を周に分け、周の表を作る。閉じた周の規則はここだけに置く（`ingest` と `fit` で共用）。"""
+    lr = lap_records(ibt.col("LapCompleted"))
+    keep = lr.lap >= 0
+    if not keep.any():
+        raise ValueError("LapCompleted が 0 以上の記録がない（ガレージにいただけ）")
+    t = ibt.col("SessionTime")[keep]
+    lap = lr.lap[keep]
+    if lr.resets:
+        warnings.warn(f"ピットへのリセットを含む周を閉じていない周にした: {lr.resets}", stacklevel=2)
+    if lr.broken_ends:
+        warnings.warn(
+            f"LapCompleted が 2 以上増えた。直前の周を閉じていない周にした: {lr.broken_ends}",
+            stacklevel=2,
+        )
+    starts, unknown = lap_starts(t, lap, ibt.col("LapCurrentLapTime")[keep].astype(np.float64))
+    if unknown:
+        warnings.warn(f"開始時刻を求められなかった周の前後を閉じていない周にした: {unknown}", stacklevel=2)
+    bad = pl.col("lap").is_in(lr.resets + lr.broken_ends + unknown)
+    # lap_valid は to_common が判定し直すので、ここでは closed と lap_time だけを直す
+    table = lap_table(starts).with_columns(closed=pl.col("closed") & ~bad).with_columns(
+        lap_time=pl.when("closed").then("lap_time")
+    ).join(
+        own_lap_times(lap, ibt.col("LapLastLapTime")[keep]), on="lap", how="left",
+        maintain_order="left",
+    )
+    return Laps(keep=keep, t=t, table=table)
 
 
 @dataclass(frozen=True)
@@ -267,43 +317,14 @@ def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
     course_dir, xy = course_xy(ibt, track_dir)
     session_id = datetime.fromtimestamp(ibt.start_unix, UTC).strftime("%Y%m%dT%H%M%SZ")
 
-    lr = lap_records(ibt.col("LapCompleted"))
-    keep = lr.lap >= 0
-    if not keep.any():
-        raise ValueError(f"{path}: LapCompleted が 0 以上の記録がない（ガレージにいただけ）")
-    t = ibt.col("SessionTime")[keep]
-    lap = lr.lap[keep]
-    if lr.resets:
-        warnings.warn(f"ピットへのリセットを含む周を閉じていない周にした: {lr.resets}", stacklevel=2)
-    if lr.broken_ends:
-        warnings.warn(
-            f"LapCompleted が 2 以上増えた。直前の周を閉じていない周にした: {lr.broken_ends}",
-            stacklevel=2,
-        )
-
-    starts, unknown = lap_starts(t, lap, ibt.col("LapCurrentLapTime")[keep].astype(np.float64))
-    if unknown:
-        warnings.warn(f"開始時刻を求められなかった周の前後を閉じていない周にした: {unknown}", stacklevel=2)
-    bad = pl.col("lap").is_in(lr.resets + lr.broken_ends + unknown)
-    laps = lap_table(starts).with_columns(closed=pl.col("closed") & ~bad)
-    laps = laps.with_columns(lap_time=pl.when("closed").then("lap_time"))
-    laps = with_validity(laps, pl.lit(True))
-    laps = laps.join(
-        own_lap_times(lap, ibt.col("LapLastLapTime")[keep]), on="lap", how="left",
-        maintain_order="left",
-    )
-    t_start = laps["t_start"].to_numpy()
-    lap_ids = laps["lap"].to_numpy()
-
-    def lap_of(t_abs: np.ndarray) -> np.ndarray:
-        # 最初の周の開始より前（LapCurrentLapTime を引いた分）は最初の周に入れる
-        return lap_ids[np.maximum(np.searchsorted(t_start, t_abs, side="right") - 1, 0)]
-
+    laps = split_laps(ibt)
+    keep, t = laps.keep, laps.t
+    lap = laps.lap_of(t)
     raw = pl.DataFrame({
         "source": SOURCE,
         "session_id": session_id,
         "lap": pl.Series(lap, dtype=pl.Int64),
-        "t": t - t_start[np.searchsorted(lap_ids, lap)],
+        "t": laps.lap_time(t, lap),
         **_flatten(ibt, keep),
     })
 
@@ -311,14 +332,14 @@ def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
         t, xy[keep, 0], xy[keep, 1], ibt.col("Speed")[keep].astype(np.float64), rate_hz=RATE_HZ
     )
     tg = d["t"].to_numpy()
-    lap_g = lap_of(tg)
+    lap_g = laps.lap_of(tg)
 
     def interp(name: str) -> pl.Series:
         return pl.Series(np.interp(tg, t, ibt.col(name)[keep].astype(np.float64)))
 
     timed = d.with_columns(
         lap=pl.Series(lap_g, dtype=pl.Int64),
-        t=pl.Series(tg - t_start[np.searchsorted(lap_ids, lap_g)]),
+        t=pl.Series(laps.lap_time(tg, lap_g)),
         ax=pl.Series(smooth_g(t, ibt.col("LongAccel")[keep].astype(np.float64), tg)),
         ay=pl.Series(smooth_g(t, ibt.col("LatAccel")[keep].astype(np.float64), tg)),
         steer=pl.lit(None, dtype=pl.Float64),
@@ -326,12 +347,12 @@ def ingest(path: Path, track_dir: Path = TRACK_DIR) -> Session:
         brake=interp("Brake"),
     ).with_columns(pl.col("ax", "ay").fill_nan(None)).select(TIMED_COLUMNS)
 
-    agrees = agrees_with_own_timing(laps, "iRacing")
-    common, laps, dropped = to_common(
-        timed, laps, load_refline(course_dir), SOURCE, session_id, usable=agrees
+    agrees = agrees_with_own_timing(laps.table, "iRacing")
+    common, table, dropped = to_common(
+        timed, laps.table, load_refline(course_dir), SOURCE, session_id, usable=agrees
     )
     return Session(
-        common=common, timed=timed, raw=raw.select(*JOIN_KEYS, pl.exclude(JOIN_KEYS)), laps=laps,
+        common=common, timed=timed, raw=raw.select(*JOIN_KEYS, pl.exclude(JOIN_KEYS)), laps=table,
         ibt=ibt, n_garage=int((~keep).sum()), dropped=dropped,
     )
 
@@ -340,23 +361,18 @@ def fit(path: Path, course: str) -> None:
     """閉じた周の位置を基準線に合わせ、`track/<course>/iracing_transform.toml` を書く。"""
     ibt = read_ibt(path)
     course_dir = TRACK_DIR / course
-    lr = lap_records(ibt.col("LapCompleted"))
-    keep = lr.lap >= 0
-    t, lap = ibt.col("SessionTime")[keep], lr.lap[keep]
-    starts, unknown = lap_starts(t, lap, ibt.col("LapCurrentLapTime")[keep].astype(np.float64))
-    bad = lr.resets + lr.broken_ends + unknown
-    closed = lap_table(starts).filter(pl.col("closed") & ~pl.col("lap").is_in(bad))
-    if closed.height == 0:
+    laps = split_laps(ibt)
+    closed = laps.table.filter("closed")["lap"].to_numpy()
+    if closed.size == 0:
         raise SystemExit(f"{path}: 閉じた周がない")
-    in_closed = np.isin(lap, closed["lap"].to_numpy())
-    src = enu(ibt, course_dir)[keep][in_closed][::6]  # 10 Hz
+    in_closed = np.isin(laps.lap_of(laps.t), closed)
+    src = enu(ibt, course_dir)[laps.keep][in_closed][::6]  # 10 Hz
     line = load_refline(course_dir)
     sim, dist = fit_similarity(src, np.r_[line.xy, line.xy[:1]])
     text = transform_toml(
         "# iRacing の Lat、Lon を origin.toml の原点で ENU に移した点から、基準線に合わせた局所座標への\n"
         "# 相似変換。ingest.ibt --fit が書く。p = scale * R(rotation_deg) @ (x, y) + (tx, ty)\n",
-        {"iracing_track": ibt.info("TrackName"), "iracing_config": ibt.info("TrackConfigName")},
-        sim, dist, path.name,
+        track_match(ibt), sim, dist, path.name,
     )
     out = course_dir / TRANSFORM_FILE
     out.write_text(text, encoding="utf-8")
