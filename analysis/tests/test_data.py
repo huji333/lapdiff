@@ -76,3 +76,10 @@ def test_time_delta_errors(db):
         data.time_delta(tel, "racechrono rc1 #3")
     with pytest.raises(ValueError, match="Parquet にない周"):
         data.load_laps(db, ["racechrono rc1 #9"])
+
+
+def test_group_of():
+    assert data.group_of("racechrono") == data.group_of("ac") == "real"
+    assert data.group_of("iracing") == "iracing"
+    with pytest.raises(ValueError, match="GROUPS"):
+        data.group_of("rf2")

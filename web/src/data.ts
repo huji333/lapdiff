@@ -4,7 +4,7 @@
 // 写しの突き合わせは fixtures/contract.json（pytest が書き出しと一致を確かめる）で data.test.ts が行う。
 
 /** 書き出す形の版（analysis.export の SCHEMA）。違う版の JSON は読まない */
-export const SCHEMA = 1;
+export const SCHEMA = 2;
 
 /** 周ごとの配列のキー（analysis.export の DIGITS のキー）。書き出しの channels と一致しなければ読まない */
 export const CHANNELS = ["t", "speed_kmh", "x", "y", "ax", "ay", "offset", "throttle", "brake"] as const;
@@ -14,6 +14,8 @@ export type Series = (number | null)[];
 export interface Lap {
   label: string;
   source: string;
+  /** 比べる組（analysis.data.GROUPS。実車と AC は "real"、iRacing は "iracing"）。source から組を判定しない */
+  group: string;
   session_id: string;
   lap: number;
   lap_valid: boolean;
@@ -225,9 +227,9 @@ export function defaultComparison(laps: Lap[], ref: Lap | null): Lap | null {
   return cand.find((l) => ref == null || l.source !== ref.source) ?? cand[0] ?? null;
 }
 
-/** 既定で重ねる周：lap_valid の周。 */
-export function defaultSelection(laps: Lap[]): Set<string> {
-  return new Set(laps.filter((l) => l.lap_valid).map((l) => l.label));
+/** 既定で重ねる周：lap_valid の周。`group` を渡せばその組の周だけ（基準ラップの組。SPEC「analysis と web view」） */
+export function defaultSelection(laps: Lap[], group: string | null = null): Set<string> {
+  return new Set(laps.filter((l) => l.lap_valid && (group == null || l.group === group)).map((l) => l.label));
 }
 
 /**

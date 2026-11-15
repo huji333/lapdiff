@@ -25,6 +25,29 @@ describe("initialState", () => {
   });
 });
 
+describe("組（group）", () => {
+  // どの周より速い iRacing の周を足す。実車と AC の組とは比べない
+  const acLap = doc.laps.find((l) => l.label === AC)!;
+  const IR = "iracing i #1";
+  const docI: CourseData = {
+    ...doc,
+    laps: [...doc.laps, { ...acLap, label: IR, source: "iracing", group: "iracing", t_end: 5 }],
+  };
+  const s = initialState(docI, { showInvalid: false, multi: false, view: "overview", corner: null });
+
+  it("比較と重ねる周は基準ラップと同じ組から選ぶ", () => {
+    expect(s.ref).toBe(RC2);
+    expect(s.cmp).toBe(AC);
+    expect(s.selected.has(IR)).toBe(false);
+    expect(labels(derive(s, docI).cmpCandidates)).not.toContain(IR);
+  });
+
+  it("基準を iRacing の周にすると、実車と AC の周は比較の候補から外れる", () => {
+    const n = normalize({ ...s, ref: IR }, docI);
+    expect(n).toEqual({ ref: IR, cmp: null });
+  });
+});
+
 describe("normalize", () => {
   const norm = (patch: Partial<State>) => normalize({ ...base, ...patch }, doc);
 

@@ -35,6 +35,7 @@ function lap(label: string, t: (number | null)[], opts: Partial<Lap> = {}): Lap 
   return {
     label,
     source: "racechrono",
+    group: "real",
     session_id: "s",
     lap: 1,
     lap_valid: true,

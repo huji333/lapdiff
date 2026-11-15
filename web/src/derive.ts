@@ -38,9 +38,9 @@ function lapOf(doc: CourseData, label: string | null): Lap | null {
   return label == null ? null : (doc.laps.find((l) => l.label === label) ?? null);
 }
 
-/** 比較の周の候補：一覧に出す周のうち基準以外 */
+/** 比較の周の候補：一覧に出す周のうち、基準以外で基準と同じ組の周（基準がなければ全部） */
 export function cmpCandidates(doc: CourseData, showInvalid: boolean, ref: Lap | null): Lap[] {
-  return shownLaps(doc.laps, showInvalid).filter((l) => l !== ref);
+  return shownLaps(doc.laps, showInvalid).filter((l) => l !== ref && (ref == null || l.group === ref.group));
 }
 
 /**
@@ -66,7 +66,7 @@ export function initialState(doc: CourseData, keep: Pick<State, "showInvalid" | 
   const cmps = cmpCandidates(doc, keep.showInvalid, lapOf(doc, ref));
   const state: State = {
     ...keep,
-    selected: defaultSelection(doc.laps),
+    selected: defaultSelection(doc.laps, lapOf(doc, ref)?.group ?? null),
     ref,
     cmp: defaultComparison(cmps, lapOf(doc, ref))?.label ?? null,
   };

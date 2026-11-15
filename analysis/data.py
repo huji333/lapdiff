@@ -26,6 +26,15 @@ REPO_DIR = Path(__file__).resolve().parents[1]
 COMPLETE_GAP = 5.0
 # `telemetry.parquet` の全長（s / dist_norm）と基準線の全長の差の許容 [m]
 LENGTH_TOL = 0.1
+# 周どうしを比べる組（SPEC「analysis と web view」）。ソースと組の対応はここだけに置き、書き出しに含める。
+# 実車と AC は比べる。iRacing は実車と比べず、iRacing どうしで比べる
+GROUPS = {"racechrono": "real", "ac": "real", "iracing": "iracing"}
+
+
+def group_of(source: str) -> str:
+    if source not in GROUPS:
+        raise ValueError(f"組の決まっていないソース: {source}（analysis.data.GROUPS に足す）")
+    return GROUPS[source]
 
 LAPS_SQL = f"""
 CREATE VIEW laps AS

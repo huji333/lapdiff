@@ -25,6 +25,8 @@
   vitest（`data.test.ts`）がそれを読んで `checkCourse` と写した処理の結果を確かめる。
 - `schema`：書き出す形の版 `SCHEMA`。web view は版が違えば「npm run data で書き出し直す」と失敗させる。
 - `channels`：周ごとの配列のキー（`DIGITS` のキーの並び）。web view が周のキーと長さを確かめるのに使う。
+- `group`：周ごとの比べる組（`data.GROUPS`。実車と AC は `real`、iRacing は `iracing`）。web view は
+  比較の周と重ねる周を基準ラップと同じ組から選び、`source` の値から組を判定しない。
 - `throttle`・`brake`：直接計測したペダル（0〜1）。AC にはあり、CAN のない実車では全部 null。
 - `offset` [m]：同じ `s` での基準線からの横のずれ。進行方向の左を正にする（`ay` と同じ向き）。
   基準線は実車の有効な周を平均した線で、コースの中心でも縁でもない。ライン取りの差を比べるための原点。
@@ -80,7 +82,7 @@ from ingest.corners import load_corners
 from ingest.track import TRACK_DIR, frame, load_refline
 
 # 書き出す形の版。形を変えたら上げ、web/src/data.ts の SCHEMA も同じ値にする
-SCHEMA = 1
+SCHEMA = 2
 BRAKE_G = 0.3
 BRAKE_LOOKBACK = 250.0
 # 周ごとのチャンネルと丸めの桁（小数点以下）。JSON の大きさを抑える。キーの並びを `channels` として書き出す
@@ -283,6 +285,7 @@ def export_course(data_dir: Path, course_dir: Path) -> dict:
         g = by_label[meta["label"]]
         idx = g["s"].cast(pl.Int64).to_list()
         meta["t_end"] = round(meta["t_end"], DIGITS["t"])
+        meta["group"] = data.group_of(meta["source"])
         for col, digits in DIGITS.items():
             meta[col] = _column(idx, g[col].to_list(), digits, n)
         meta["corner_stats"] = None if secs is None else corner_stats(meta, secs)

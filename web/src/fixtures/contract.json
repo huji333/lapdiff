@@ -848,6 +848,7 @@
       "v_min": 144.0
      }
     },
+    "group": "real",
     "label": "ac ac1 #1",
     "lap": 1,
     "lap_valid": true,
@@ -1808,6 +1809,7 @@
       "v_min": 143.9
      }
     },
+    "group": "real",
     "label": "racechrono rc1 #1",
     "lap": 1,
     "lap_valid": true,
@@ -2768,6 +2770,7 @@
       "v_min": 144.0
      }
     },
+    "group": "real",
     "label": "racechrono rc1 #2",
     "lap": 2,
     "lap_valid": true,
@@ -3728,6 +3731,7 @@
       "v_min": null
      }
     },
+    "group": "real",
     "label": "racechrono rc1 #3",
     "lap": 3,
     "lap_valid": false,
@@ -4673,7 +4677,7 @@
     0.0
    ]
   },
-  "schema": 1,
+  "schema": 2,
   "sections": [
    {
     "id": "→T1",

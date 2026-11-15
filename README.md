@@ -41,6 +41,7 @@ uv run python -m ingest.iracing_dir --watch    # 見張り続ける（web/ で n
 - 新しい周を取り込むと書き出し直すので、ブラウザを再読み込みすると出る。基準ラップの既定は iRacing の有効な最速周、比較の既定はその次に速い周
 - ほかの人の速い周を基準にしたいときは、Garage 61 で周の CSV を書き出してダウンロードに置く（`Garage 61 - *.csv`）。同じ見張りが取り込む（`--garage61-dir` で場所を変える、`--no-garage61` で探さない）。1 つだけなら `uv run python -m ingest.garage61 <csv> data/`。CSV に時刻の列はないので 60 Hz の等間隔とみなし、ファイル名のタイムと 0.05 s 以内で合う周だけを有効にする
 - `npm run data`（fixtures）と同じ `web/public/data/okayama.json` に書くので、あとから実行したほうが表示される
+- 実車や AC の周を同じ `data/` に入れてもよい（`uv run python -m ingest.acraw <acraw.gz> data/` など）。周は組（実車と AC、iRacing）に分けて書き出し、比較の周と重ねる周は基準ラップと同じ組から選ぶ。基準ラップの既定は実車の最速周で、実車の周がなければ iRacing の最速周
 - iRacing の設定で `app.ini` の `[Misc]` に `irsdkAutoLogDisk=1` を入れておくと、車に乗るたびに記録される（SPEC「記録は iRacing 自身の `.ibt` を使う」）
 
 ## 分析
