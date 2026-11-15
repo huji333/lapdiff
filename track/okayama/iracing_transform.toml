@@ -1,0 +1,12 @@
+# iRacing の Lat、Lon を origin.toml の原点で ENU に移した点から、基準線に合わせた局所座標への
+# 相似変換。ingest.ibt --fit が書く。p = scale * R(rotation_deg) @ (x, y) + (tx, ty)
+iracing_track = "okayama full"
+iracing_config = "Full Course"
+scale = 1.008278
+rotation_deg = 0.0296
+tx = 3.102
+ty = 0.552
+
+# 推定の出どころ。合わせた先は基準線（refline.csv）
+fit_source = "okayama_mx5cup_lap9_best.ibt"
+fit_residual_m = { median = 1.35, p95 = 3.43, max = 4.59 }

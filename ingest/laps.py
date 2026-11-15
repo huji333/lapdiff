@@ -11,11 +11,17 @@
   欠けの大きい周を false にして `with_validity` で判定し直す。
   基準を「usable な周の中の最速」にするのは、計測線の誤検出などで異常に短い周が 1 つあっても、
   正常な周がまとめて無効にならないようにするため。
+- `agrees_with_own_timing`：シムの周は、ラップタイムがシム自身の計時（`lap_time_own`）と
+  `OWN_TIME_TOL` 以上違えば比べない（ポーズを含む周など）。自身の計時がない周（null）も比べない。
+  AC と iRacing で同じ関数を使う。
 """
+
+import warnings
 
 import polars as pl
 
 SLOW_FACTOR = 1.07
+OWN_TIME_TOL = 0.05  # シム自身の計時との差の上限 [s]。AC の fixture では 2 ms
 
 
 def lap_table(starts: pl.DataFrame) -> pl.DataFrame:
@@ -39,3 +45,19 @@ def with_validity(laps: pl.DataFrame, usable: pl.Expr) -> pl.DataFrame:
     best = laps.filter(timed)["lap_time"].min()
     valid = timed & (pl.col("lap_time") <= SLOW_FACTOR * best) if best is not None else pl.lit(False)
     return laps.drop("lap_valid", strict=False).with_columns(lap_valid=valid)
+
+
+def agrees_with_own_timing(laps: pl.DataFrame, sim: str) -> pl.Expr:
+    """`lap_time_own` の列を持つ周の表について、自身の計時と合う周を true にする式を返す。
+
+    合わない閉じた周は、警告に並べてから false にする（`to_common` の `usable` に渡す）。
+    """
+    diff = (pl.col("lap_time") - pl.col("lap_time_own")).abs()
+    bad = laps.filter(pl.col("closed") & (diff.is_null() | (diff > OWN_TIME_TOL)))
+    if bad.height:
+        warnings.warn(
+            f"{sim} の計時と {OWN_TIME_TOL} s 以上違うか、計時がない周を無効にした: "
+            f"{bad.select('lap', 'lap_time', 'lap_time_own').rows()}",
+            stacklevel=2,
+        )
+    return diff <= OWN_TIME_TOL
