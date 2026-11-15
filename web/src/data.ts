@@ -1,0 +1,404 @@
+// 書き出したデータ（analysis.export）の読み込みと、画面の状態に依存する計算。
+// Python の処理を写したもの（SCHEMA、CHANNELS、timeDelta、finalDelta、sectorTimes ほか）の一覧と理由は
+// analysis/export.py の docstring にだけ書く。Python 側を変えたらここも合わせる。
+// 写しの突き合わせは fixtures/contract.json（pytest が書き出しと一致を確かめる）で data.test.ts が行う。
+
+/** 書き出す形の版（analysis.export の SCHEMA）。違う版の JSON は読まない */
+export const SCHEMA = 1;
+
+/** 周ごとの配列のキー（analysis.export の DIGITS のキー）。書き出しの channels と一致しなければ読まない */
+export const CHANNELS = ["t", "speed_kmh", "x", "y", "ax", "ay", "offset", "throttle", "brake"] as const;
+
+export type Series = (number | null)[];
+
+export interface Lap {
+  label: string;
+  source: string;
+  session_id: string;
+  lap: number;
+  lap_valid: boolean;
+  complete: boolean;
+  t_end: number;
+  t: Series;
+  speed_kmh: Series;
+  x: Series;
+  y: Series;
+  /** 前後G [G]。加速が正 */
+  ax: Series;
+  /** 横G [G]。左旋回が正（ingest.derive） */
+  ay: Series;
+  /** アクセル・ブレーキのペダル（0〜1）。AC にはあり、CAN のない実車では全部 null */
+  throttle: Series;
+  brake: Series;
+  /** 基準線からの横のずれ [m]。進行方向の左が正（analysis.export） */
+  offset: Series;
+  /** コーナーごとの値（コーナーの id で引く）。corners.toml がなければ null */
+  corner_stats: Record<string, CornerStat> | null;
+  /** 区間タイム [s]（sections と同じ順）。区間に欠けがあれば null。corners.toml がなければ全体が null */
+  section_times: (number | null)[] | null;
+}
+
+interface SectionBase {
+  id: string;
+  name: string;
+  s_start: number;
+  s_end: number;
+}
+
+/**
+ * コーナーの区間（analysis.export の sections の kind = "corner"）。境界は corners.toml の値ではなく、
+ * 隙間を吸収して延ばした区間の境界。コーナーの区間タイムは section_times のこの区間の値
+ */
+export interface Corner extends SectionBase {
+  kind: "corner";
+  s_apex: number | null;
+  /** corners.toml の r_apex の符号から決めた向き。r_apex がなければ null */
+  side: "left" | "right" | null;
+}
+
+/** analysis.export の sections：コーナーと直線で 1 周を隙間なく覆う区間。境界は s の格子の整数 */
+export type Section = Corner | (SectionBase & { kind: "straight" });
+
+/**
+ * analysis.export の corner_stats。区間は sections のコーナーの区間。区間に欠けがある周は値が null。速度は km/h
+ */
+export interface CornerStat {
+  v_min: number | null;
+  s_vmin: number | null;
+  v_entry: number | null;
+  v_exit: number | null;
+  /** ブレーキ開始点（ax が -brake_g を下回り始めた s）。ブレーキなし・欠けありなら null */
+  s_brake: number | null;
+  /** 前のコーナーの後からボトムまでの ax の最小値 [G]。欠けありなら null */
+  ax_min: number | null;
+}
+
+export interface Refline {
+  s: number[];
+  x: number[];
+  y: number[];
+}
+
+export interface Point2 {
+  x: number[];
+  y: number[];
+}
+
+/**
+ * 路面の端より外にある縁石の帯の多角形（analysis.export の edges.kerbs）。路面の端を格子の添字の順に進み、
+ * 縁石の外の線を戻る。i は各点の基準線の格子の添字
+ */
+export interface Kerb {
+  side: "left" | "right";
+  i: number[];
+  x: number[];
+  y: number[];
+}
+
+/**
+ * コースの端（analysis.export の edges）。基準線の格子の各 s での左右の端の点。
+ * 空中写真から取り出した白線の外側（走路の限界）で、±1〜2 m ずれうる。attribution は出典の表記
+ */
+export interface Edges {
+  left: Point2;
+  right: Point2;
+  kerbs: Kerb[];
+  attribution: string;
+  attribution_url: string;
+}
+
+export interface CourseData {
+  schema: number;
+  channels: string[];
+  course: string;
+  length: number;
+  grid_max: number;
+  refline: Refline;
+  /** track/<course>/edges.csv がなければ null */
+  edges: Edges | null;
+  /** corners.toml がなければ null */
+  sections: Section[] | null;
+  default_ref: string | null;
+  /** ブレーキ開始点のしきい値 [G]（仮の値。analysis.export の BRAKE_G） */
+  brake_g: number;
+  /** 区間タイムの差をこれ未満なら「差なし」とみなすしきい値 [s]（仮の値。analysis.export の MIN_DIFF_S） */
+  min_diff_s: number;
+  laps: Lap[];
+}
+
+export type Range = [number, number];
+
+async function fetchJson(url: string): Promise<unknown> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`${url} を読めない（HTTP ${res.status}）。npm run data で書き出したか確かめる`);
+  }
+  return res.json();
+}
+
+export async function loadIndex(): Promise<string[]> {
+  const doc = (await fetchJson("data/index.json")) as { courses: string[] };
+  return doc.courses;
+}
+
+export async function loadCourse(course: string): Promise<CourseData> {
+  const doc = (await fetchJson(`data/${course}.json`)) as CourseData;
+  checkCourse(doc);
+  return doc;
+}
+
+/**
+ * 書き出しの約束と合っているか。版、チャンネルのキー、配列の長さ（周の配列は grid_max + 1）、
+ * コーナーごと・区間ごとの値がコーナーと区間に揃っているか。合わなければ失敗させる。
+ */
+export function checkCourse(doc: CourseData): void {
+  if (doc.schema !== SCHEMA) {
+    throw new Error(
+      `${doc.course}: 書き出しの版が ${doc.schema ?? "なし"}（web view は ${SCHEMA}）。npm run data で書き出し直す`,
+    );
+  }
+  if (doc.channels.join() !== CHANNELS.join()) {
+    throw new Error(`${doc.course}: チャンネルが ${doc.channels.join(", ")}（${CHANNELS.join(", ")} のはず）`);
+  }
+  const n = doc.grid_max + 1;
+  const r = doc.refline;
+  if (r.x.length !== r.s.length || r.y.length !== r.s.length) {
+    throw new Error(`${doc.course}: 基準線の s, x, y の長さが違う`);
+  }
+  if (doc.edges) {
+    for (const side of ["left", "right"] as const) {
+      const e = doc.edges[side];
+      if (e.x.length !== r.s.length || e.y.length !== r.s.length) {
+        throw new Error(`${doc.course}: コースの端（${side}）の長さが基準線と違う`);
+      }
+    }
+    for (const k of doc.edges.kerbs) {
+      if (k.x.length !== k.i.length || k.y.length !== k.i.length) {
+        throw new Error(`${doc.course}: 縁石（${k.side}）の i, x, y の長さが違う`);
+      }
+    }
+  }
+  const cornerIds = doc.sections == null ? null : cornersOf(doc).map((c) => c.id).join();
+  for (const lap of doc.laps) {
+    for (const key of CHANNELS) {
+      if (lap[key]?.length !== n) {
+        throw new Error(`${doc.course}: ${lap.label} の ${key} の長さが ${lap[key]?.length}（${n} のはず）`);
+      }
+    }
+    if ((lap.section_times?.length ?? null) !== (doc.sections?.length ?? null)) {
+      throw new Error(`${doc.course}: ${lap.label} の section_times の数が区間の数と違う`);
+    }
+    const statIds = lap.corner_stats == null ? null : Object.keys(lap.corner_stats).join();
+    if (statIds !== cornerIds) {
+      throw new Error(`${doc.course}: ${lap.label} の corner_stats のコーナーが sections のコーナーと違う`);
+    }
+  }
+}
+
+/** コーナー（sections のコーナーの区間、s の順）。corners.toml がなければ空 */
+export function cornersOf(doc: CourseData): Corner[] {
+  return (doc.sections ?? []).filter((s): s is Corner => s.kind === "corner");
+}
+
+/** 区間 `id` の区間タイム（section_times の値）。区間がないか、区間に欠けがあれば null */
+export function sectionTime(doc: CourseData, lap: Lap, id: string): number | null {
+  const i = doc.sections?.findIndex((s) => s.id === id) ?? -1;
+  return i < 0 ? null : (lap.section_times?.[i] ?? null);
+}
+
+/** 一覧に出す周。既定では lap_valid の周だけ。 */
+export function shownLaps(laps: Lap[], showInvalid: boolean): Lap[] {
+  return showInvalid ? laps : laps.filter((l) => l.lap_valid);
+}
+
+/** 基準ラップの候補：一覧に出す周のうち complete の周（marimo のビュー 1 と同じ）。 */
+export function refCandidates(laps: Lap[], showInvalid: boolean): Lap[] {
+  return shownLaps(laps, showInvalid).filter((l) => l.complete);
+}
+
+/**
+ * 2 周で比べるときの既定の比較の周：`ref` 以外の有効で欠けのない周のうち、`ref` と別のソース
+ * （実車と AC）の最速周。別のソースになければ同じソースの最速周。候補がなければ null。
+ */
+export function defaultComparison(laps: Lap[], ref: Lap | null): Lap | null {
+  const cand = laps.filter((l) => l !== ref && l.lap_valid && l.complete).sort((a, b) => a.t_end - b.t_end);
+  return cand.find((l) => ref == null || l.source !== ref.source) ?? cand[0] ?? null;
+}
+
+/** 既定で重ねる周：lap_valid の周。 */
+export function defaultSelection(laps: Lap[]): Set<string> {
+  return new Set(laps.filter((l) => l.lap_valid).map((l) => l.label));
+}
+
+/**
+ * 基準ラップ `ref` とのタイム差 dt(s) = t_lap(s) - t_ref(s)（data.time_delta と同じ。丸めた t から引くので ±1e-3 s）。
+ * complete でない周は t の原点が比べられないので全部 null。どちらかの周に s の行がなければ null。
+ */
+export function timeDelta(lap: Lap, ref: Lap): Series {
+  if (!ref.complete) {
+    throw new Error(`基準ラップ ${ref.label} は s が欠けている周（complete でない）`);
+  }
+  if (!lap.complete) return lap.t.map(() => null);
+  return lap.t.map((t, i) => {
+    const tr = ref.t[i];
+    return t == null || tr == null ? null : t - tr;
+  });
+}
+
+/** dt が出ている最後の s での dt（data.final_delta と同じ）。ひとつもなければ null。 */
+export function finalDelta(dt: Series): { s: number; dt: number } | null {
+  for (let i = dt.length - 1; i >= 0; i--) {
+    const v = dt[i];
+    if (v != null) return { s: i, dt: v };
+  }
+  return null;
+}
+
+/** G-G 図の点（横G `lat` = ay、前後G `lon` = ax）。s の範囲 `range` の中の点だけ。 */
+export interface GPoint {
+  s: number;
+  lat: number;
+  lon: number;
+}
+
+export function gPoints(lap: Lap, range: Range | null): (GPoint | null)[] {
+  const [a, b] = range ? (range[0] <= range[1] ? range : [range[1], range[0]]) : [-Infinity, Infinity];
+  return lap.ax.map((ax, s) => {
+    const ay = lap.ay[s];
+    // 範囲の外と null の点は null にして、線をそこで切る
+    if (s < a || s > b || ax == null || ay == null) return null;
+    return { s, lat: ay, lon: ax };
+  });
+}
+
+/** ペダルのグラフの値：アクセルを上に、ブレーキを下（負）に [%]。範囲 `win` の外と、どちらも null の点は null */
+export function pedalSeries(lap: Lap, win: Range): { throttle: Series; brake: Series } {
+  const pct = (v: Series, sign: number): Series =>
+    v.map((p, s) => (p == null || s < win[0] || s > win[1] ? null : sign * p * 100));
+  return { throttle: pct(lap.throttle, 1), brake: pct(lap.brake, -1) };
+}
+
+/** ペダルの値が 1 つでもある周か。 */
+export function hasPedals(lap: Lap): boolean {
+  return lap.throttle.some((v) => v != null) || lap.brake.some((v) => v != null);
+}
+
+/** コーナーのビューで描く s の範囲：区間の前後に `pad` [m] 足し、0〜grid_max に収める。 */
+export function cornerWindow(c: Corner, gridMax: number, pad: number): Range {
+  return [Math.max(0, Math.floor(c.s_start - pad)), Math.min(gridMax, Math.ceil(c.s_end + pad))];
+}
+
+/**
+ * x・y を同じ縮尺で、幅 `width`・高さ `height` の枠いっぱいに描くための範囲。
+ * 狭い方の向きの範囲を広げて、枠の縦横比に合わせる。
+ */
+export function fitDomains(
+  xExt: Range,
+  yExt: Range,
+  width: number,
+  height: number,
+  margin: number,
+): { x: Range; y: Range } {
+  const xSpan = xExt[1] - xExt[0];
+  const ySpan = yExt[1] - yExt[0];
+  if (!(xSpan > 0 && ySpan > 0)) throw new Error(`図の範囲が空（x ${xSpan} m、y ${ySpan} m）`);
+  const mPerPx = Math.max(xSpan / (width - 2 * margin), ySpan / (height - 2 * margin));
+  const half = (ext: Range, px: number): Range => {
+    const mid = (ext[0] + ext[1]) / 2;
+    const h = (mPerPx * (px - 2 * margin)) / 2;
+    return [mid - h, mid + h];
+  };
+  return { x: half(xExt, width), y: half(yExt, height) };
+}
+
+/** 基準線の点のうち矩形の中にある点の s の最小〜最大。矩形がコースの離れた 2 か所にかかると間を全部含む。 */
+export function sRangeInRect(line: Refline, x0: number, x1: number, y0: number, y1: number): Range | null {
+  const [xa, xb] = x0 <= x1 ? [x0, x1] : [x1, x0];
+  const [ya, yb] = y0 <= y1 ? [y0, y1] : [y1, y0];
+  let lo = Infinity;
+  let hi = -Infinity;
+  line.s.forEach((s, i) => {
+    const x = line.x[i]!;
+    const y = line.y[i]!;
+    if (x >= xa && x <= xb && y >= ya && y <= yb) {
+      lo = Math.min(lo, s);
+      hi = Math.max(hi, s);
+    }
+  });
+  return lo <= hi ? [lo, hi] : null;
+}
+
+/** 基準線上の距離 s の位置（線形補間）。範囲外は端の点。 */
+export function pointAt(line: Refline, s: number): { x: number; y: number } {
+  const { s: ss, x, y } = line;
+  if (ss.length === 0) throw new Error("基準線が空");
+  if (s <= ss[0]!) return { x: x[0]!, y: y[0]! };
+  const last = ss.length - 1;
+  if (s >= ss[last]!) return { x: x[last]!, y: y[last]! };
+  let lo = 0;
+  let hi = last;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (ss[mid]! <= s) lo = mid;
+    else hi = mid;
+  }
+  const f = (s - ss[lo]!) / (ss[hi]! - ss[lo]!);
+  return { x: x[lo]! + f * (x[hi]! - x[lo]!), y: y[lo]! + f * (y[hi]! - y[lo]!) };
+}
+
+/**
+ * 自己ベストの母集団：`lap` と同じソースの、lap_valid の周（全期間）。
+ * 実車と AC は分ける。無効な周（ピットイン、コース外など）は区間が速く出ることがあるので入れない。
+ */
+export function bestPool(laps: Lap[], lap: Lap): Lap[] {
+  return laps.filter((l) => l.source === lap.source && l.lap_valid);
+}
+
+/** 区間ごとの最小（null を除く）。どの周にも値がない区間は null。 */
+export function minPerIndex(rows: (number | null)[][], n: number): (number | null)[] {
+  const out: (number | null)[] = Array.from({ length: n }, () => null);
+  for (const row of rows) {
+    row.forEach((v, i) => {
+      if (v != null && (out[i] == null || v < out[i]!)) out[i] = v;
+    });
+  }
+  return out;
+}
+
+/** `times` と区間ごとの自己ベスト `best` の差 [s]。どちらかが null なら null。 */
+export function lossVsBest(times: (number | null)[], best: (number | null)[]): (number | null)[] {
+  return times.map((v, i) => (v == null || best[i] == null ? null : v - best[i]!));
+}
+
+/** ミニセクターの境界：0, step, 2 step, …, grid_max。最後の区間が step の半分未満なら前に含める */
+export function miniBounds(gridMax: number, step: number): number[] {
+  const b: number[] = [];
+  for (let s = 0; s < gridMax; s += step) b.push(s);
+  if (b.length > 1 && gridMax - b[b.length - 1]! < step / 2) b.pop();
+  b.push(gridMax);
+  return b;
+}
+
+/** 境界 `bounds` で区切った区間タイム。analysis.export の section_times と同じく、区間に欠けがあれば null */
+export function sectorTimes(lap: Lap, bounds: number[]): (number | null)[] {
+  const out: (number | null)[] = [];
+  for (let i = 0; i + 1 < bounds.length; i++) {
+    const a = bounds[i]!;
+    const b = bounds[i + 1]!;
+    let ok = true;
+    for (let s = a; s <= b; s++) if (lap.t[s] == null) ok = false;
+    out.push(ok ? lap.t[b]! - lap.t[a]! : null);
+  }
+  return out;
+}
+
+/**
+ * 基準線の s での進む向き。北を 0°、東を 90° として時計回りの角度 [°]（-180〜180）。
+ * s の前後 `half` [m] の点を結んだ向きで、GPS の細かい揺れを拾わないようにする。
+ */
+export function bearingAt(line: Refline, s: number, half = 3): number {
+  const a = pointAt(line, s - half);
+  const b = pointAt(line, s + half);
+  if (a.x === b.x && a.y === b.y) throw new Error(`s = ${s} で基準線の向きが決まらない`);
+  return (Math.atan2(b.x - a.x, b.y - a.y) * 180) / Math.PI;
+}

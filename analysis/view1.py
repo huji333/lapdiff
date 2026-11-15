@@ -68,6 +68,8 @@ def _(Path, TRACK_DIR, course_ui, data, data_dir_ui, load_corners, load_refline)
 def _(data, laps, mo, show_invalid_ui):
     import polars as pl
 
+    # 一覧に出す周・基準ラップの候補・既定で重ねる周の決め方は web view にも写してある
+    # （一覧は analysis/export.py の docstring）。変えたらそちらも合わせる
     shown = laps if show_invalid_ui.value else laps.filter("lap_valid")
     mo.stop(
         shown.height == 0,

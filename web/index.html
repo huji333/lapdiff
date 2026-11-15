@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>lapdiff</title>
+  </head>
+  <body>
+    <header id="toolbar">
+      <div class="bar">
+        <h1>lapdiff</h1>
+        <nav class="seg tabs" aria-label="ビュー">
+          <a href="#overview" data-view="overview" title="全体（1）">全体</a>
+          <a href="#corner" data-view="corner" title="コーナー（2）">コーナー</a>
+        </nav>
+        <select id="course" aria-label="コース"></select>
+        <button type="button" class="chip sel off" id="sel-chip" title="選択を解除（Esc）"></button>
+        <span class="spacer"></span>
+        <span class="pair">
+          <button type="button" class="chip" id="ref-chip" popovertarget="ref-picker"></button>
+          <span id="vs">vs</span>
+          <button type="button" class="chip" id="cmp-chip" popovertarget="cmp-picker"></button>
+        </span>
+        <div class="seg" id="mode" role="group" aria-label="表示">
+          <button type="button" data-multi="false" title="基準と比較の 2 周">2 周</button>
+          <button type="button" data-multi="true" title="一覧で選んだ周を重ねる">重ねる</button>
+        </div>
+      </div>
+      <div class="sub" id="corner-row" hidden>
+        <button type="button" class="nav" id="corner-prev" title="前のコーナー（←）" aria-label="前のコーナー">‹</button>
+        <div class="corners" id="corner-bar" role="group" aria-label="コーナー"></div>
+        <button type="button" class="nav" id="corner-next" title="次のコーナー（→）" aria-label="次のコーナー">›</button>
+      </div>
+    </header>
+    <div class="picker" id="ref-picker" popover>
+      <label class="pick-opt"><input type="checkbox" class="show-invalid" /> 無効な周も出す</label>
+      <div class="pick-list" role="listbox" aria-label="基準ラップ"></div>
+    </div>
+    <div class="picker" id="cmp-picker" popover>
+      <label class="pick-opt"><input type="checkbox" class="show-invalid" /> 無効な周も出す</label>
+      <div class="pick-list" role="listbox" aria-label="比較の周"></div>
+    </div>
+    <div class="page">
+      <div id="error" hidden></div>
+      <main id="view-overview">
+        <section class="map-col">
+          <div id="map"></div>
+          <div id="map-legend"></div>
+        </section>
+        <section class="dist-col">
+          <aside id="sections-panel" class="panel loss-panel" hidden>
+            <div class="fp-head" id="sp-head">
+              <span id="sp-title"></span>
+              <button type="button" class="chev" id="sp-toggle" aria-controls="sp-body">▾</button>
+            </div>
+            <div class="fp-body" id="sp-body"></div>
+          </aside>
+          <div class="dist-main" id="dist-main">
+            <div id="legend" class="legend"></div>
+            <div id="speed"></div>
+            <div id="dt"></div>
+            <div class="g-row">
+              <div id="gg"></div>
+              <div id="readout"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+      <main id="view-corner" hidden>
+        <section class="cmap-col">
+          <div id="c-map"></div>
+        </section>
+        <section class="dist-col" id="c-dist-col">
+          <h2 id="c-title"></h2>
+          <div id="c-legend" class="legend"></div>
+          <div id="c-offset"></div>
+          <div id="c-speed"></div>
+          <div id="c-ax"></div>
+          <div id="c-pedal"></div>
+          <div class="g-row">
+            <div id="c-gg"></div>
+            <div class="table-scroll"><table id="c-table" class="stats"></table></div>
+          </div>
+        </section>
+      </main>
+      <!-- 周の一覧と出典。main.ts が今のビューの右の列の末尾に移す -->
+      <section class="laps-section" id="laps-section">
+        <table id="laps"></table>
+        <p class="note" id="attribution" hidden></p>
+      </section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
