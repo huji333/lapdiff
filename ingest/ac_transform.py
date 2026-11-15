@@ -91,22 +91,53 @@ def fit_similarity(
     return sim, dist
 
 
+def find_transform(
+    filename: str, match: dict[str, str], track_dir: Path = TRACK_DIR
+) -> tuple[Path, Similarity]:
+    """`track/*/<filename>` のうち、`match` のキーと値がすべて一致するコースのディレクトリと変換を返す。
+
+    ソースごとに照合する値が違う（AC は track と trackConfiguration、iRacing は TrackName と TrackConfigName）。
+    """
+    found = []
+    for p in sorted(track_dir.glob(f"*/{filename}")):
+        conf = tomllib.loads(p.read_text(encoding="utf-8"))
+        if all(conf.get(k) == v for k, v in match.items()):
+            found.append((p, conf))
+    if len(found) != 1:
+        raise ValueError(
+            f"{match} に一致する {filename} が1つではない: {[str(f[0]) for f in found]}"
+        )
+    path, conf = found[0]
+    return path.parent, Similarity(conf["scale"], conf["rotation_deg"], conf["tx"], conf["ty"])
+
+
 def load_transform(
     ac_track: str, ac_config: str, track_dir: Path = TRACK_DIR
 ) -> tuple[Path, Similarity]:
     """AC の track / trackConfiguration に一致するコースのディレクトリと変換を返す。"""
-    found = []
-    for p in sorted(track_dir.glob("*/ac_transform.toml")):
-        conf = tomllib.loads(p.read_text(encoding="utf-8"))
-        if (conf["ac_track"], conf["ac_config"]) == (ac_track, ac_config):
-            found.append((p, conf))
-    if len(found) != 1:
-        raise ValueError(
-            f"AC の {ac_track}/{ac_config} に一致する ac_transform.toml が1つではない: "
-            f"{[str(f[0]) for f in found]}（python -m ingest.ac_transform で推定する）"
+    try:
+        return find_transform(
+            "ac_transform.toml", {"ac_track": ac_track, "ac_config": ac_config}, track_dir
         )
-    path, conf = found[0]
-    return path.parent, Similarity(conf["scale"], conf["rotation_deg"], conf["tx"], conf["ty"])
+    except ValueError as e:
+        raise ValueError(f"{e}（python -m ingest.ac_transform で推定する）") from e
+
+
+def transform_toml(
+    header: str, match: dict[str, str], sim: Similarity, dist: np.ndarray, fit_source: str
+) -> str:
+    """推定した変換を `find_transform` が読む toml の文字列にする。`header` はコメントの行。"""
+    p50, p95, pmax = np.percentile(dist, [50, 95, 100])
+    keys = "".join(f'{k} = "{v}"\n' for k, v in match.items())
+    return f"""{header}{keys}scale = {sim.scale:.6f}
+rotation_deg = {sim.rotation_deg:.4f}
+tx = {sim.tx:.3f}
+ty = {sim.ty:.3f}
+
+# 推定の出どころ。合わせた先は基準線（refline.csv）
+fit_source = "{fit_source}"
+fit_residual_m = {{ median = {p50:.2f}, p95 = {p95:.2f}, max = {pmax:.2f} }}
+"""
 
 
 def main(argv: list[str]) -> None:
@@ -124,20 +155,12 @@ def main(argv: list[str]) -> None:
     line = load_refline(TRACK_DIR / course)
     sim, dist = fit_similarity(src, np.r_[line.xy, line.xy[:1]])
 
-    p50, p95, pmax = np.percentile(dist, [50, 95, 100])
-    text = f"""# AC のワールド座標の水平面 (x, -z) から局所座標（ENU）への相似変換。ingest.ac_transform が書く。
-# p_enu = scale * R(rotation_deg) @ (x, -z) + (tx, ty)
-ac_track = "{cap.static_str('track')}"
-ac_config = "{cap.static_str('trackConfiguration')}"
-scale = {sim.scale:.6f}
-rotation_deg = {sim.rotation_deg:.4f}
-tx = {sim.tx:.3f}
-ty = {sim.ty:.3f}
-
-# 推定の出どころ。合わせた先は基準線（refline.csv）
-fit_source = "{acpath.name}"
-fit_residual_m = {{ median = {p50:.2f}, p95 = {p95:.2f}, max = {pmax:.2f} }}
-"""
+    text = transform_toml(
+        "# AC のワールド座標の水平面 (x, -z) から局所座標（ENU）への相似変換。ingest.ac_transform が書く。\n"
+        "# p_enu = scale * R(rotation_deg) @ (x, -z) + (tx, ty)\n",
+        {"ac_track": cap.static_str("track"), "ac_config": cap.static_str("trackConfiguration")},
+        sim, dist, acpath.name,
+    )
     out = TRACK_DIR / course / "ac_transform.toml"
     out.write_text(text, encoding="utf-8")
     print(text)

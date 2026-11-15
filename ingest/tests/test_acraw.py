@@ -62,7 +62,7 @@ def test_lap_times_match_race_out(session):
     lap2 = laps.filter(pl.col("lap") == 2)
     # 開始時刻を iCurrentTime で補正しているので、AC の計時と数 ms で一致する
     assert lap2["lap_time"].item() == pytest.approx(ac[2], abs=0.005)
-    assert laps["lap_time_ac"].to_list()[:2] == [ac[1], ac[2]]
+    assert laps["lap_time_own"].to_list()[:2] == [ac[1], ac[2]]
 
 
 def test_common_schema(session):
