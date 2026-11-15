@@ -51,7 +51,7 @@ def test_header_and_static(session):
 
 
 def test_lap_times_match_race_out(session):
-    race_out = json.loads(RACE_OUT.read_text())
+    race_out = json.loads(RACE_OUT.read_text(encoding="utf-8"))
     ac = {lap["lap"]: lap["time"] / 1000 for lap in race_out["sessions"][0]["laps"]}
     laps = session.laps
     assert laps["lap"].to_list() == [1, 2, 3]

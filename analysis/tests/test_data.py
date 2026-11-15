@@ -42,6 +42,18 @@ def test_default_ref(db):
     assert data.default_ref(laps.filter(pl.col("source") == "ac")) is None
 
 
+def test_default_ref_iracing_only():
+    """実車の周がなければ iRacing の有効で欠けのない最速周。AC は代わりにしない。"""
+    laps = pl.DataFrame({
+        "label": ["ac a #1", "iracing i #1", "iracing i #2", "iracing i #3", "iracing i #4"],
+        "source": ["ac", "iracing", "iracing", "iracing", "iracing"],
+        "lap_valid": [True, True, True, False, True],
+        "complete": [True, True, True, True, False],
+        "t_end": [100.0, 113.0, 112.9, 112.0, 50.0],
+    })
+    assert data.default_ref(laps) == "iracing i #2"
+
+
 def test_time_delta(db):
     labels = ["racechrono rc1 #1", "racechrono rc1 #2", "racechrono rc1 #3"]
     tel = data.time_delta(data.load_laps(db, labels), "racechrono rc1 #2")

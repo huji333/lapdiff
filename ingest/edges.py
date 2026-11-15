@@ -60,6 +60,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from ingest.cli import utf8_stdio
 from ingest.racechrono import to_enu
 from ingest.track import TRACK_DIR, Refline, frame, load_refline
 
@@ -398,4 +399,5 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     main(sys.argv[1:])

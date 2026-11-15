@@ -23,6 +23,8 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 
+from ingest.cli import utf8_stdio
+
 TRACK_DIR = Path(__file__).resolve().parents[1] / "track"
 SCALE_TOLERANCE = 0.02
 
@@ -170,4 +172,5 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     main(sys.argv[1:])

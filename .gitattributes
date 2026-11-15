@@ -1,2 +1,5 @@
 # fixtures の CSV は改行コード（CRLF）を含めて元のまま保つ
 fixtures/** -text
+
+# cmd.exe は LF だけの改行だとラベルや goto を読み違えることがある
+*.cmd text eol=crlf

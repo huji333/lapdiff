@@ -136,7 +136,7 @@ def test_write_export(tmp_path, data_dir, course_dir):
     path = export.write_export(export.export_course(data_dir, course_dir), out)
     assert path == out / "test.json"
     assert json.loads(path.read_text(encoding="utf-8"))["grid_max"] == 100
-    assert json.loads((out / "index.json").read_text()) == {"courses": ["other", "test"]}
+    assert json.loads((out / "index.json").read_text(encoding="utf-8")) == {"courses": ["other", "test"]}
     doc = export.export_course(data_dir, course_dir)
     doc["laps"][0]["t"][0] = float("nan")
     with pytest.raises(ValueError):

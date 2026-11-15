@@ -22,6 +22,8 @@ import numpy as np
 import polars as pl
 from scipy.signal import savgol_filter
 
+from ingest.cli import utf8_stdio
+
 TRACK_DIR = Path(__file__).resolve().parents[1] / "track"
 STEP = 1.0
 ITERATIONS = 3
@@ -198,4 +200,5 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     main(sys.argv[1:])

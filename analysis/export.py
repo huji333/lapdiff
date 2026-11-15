@@ -75,6 +75,7 @@ import numpy as np
 import polars as pl
 
 from analysis import data
+from ingest.cli import utf8_stdio
 from ingest.corners import load_corners
 from ingest.track import TRACK_DIR, frame, load_refline
 
@@ -330,4 +331,5 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     main(sys.argv[1:])

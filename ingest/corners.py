@@ -42,6 +42,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from ingest.cli import utf8_stdio
 from ingest.track import TRACK_DIR, load_refline
 
 SMOOTH = 15.0
@@ -274,4 +275,5 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     main(sys.argv[1:])

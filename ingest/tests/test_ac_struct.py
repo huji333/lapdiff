@@ -13,8 +13,8 @@ import pytest
 from ingest import ac_struct
 
 DATA = Path(__file__).parent / "expected"
-TABLE = json.loads((DATA / "ac_offsets.json").read_text())["versions"]
-COLLECTOR = json.loads((DATA / "ac_collector_offsets.json").read_text())["versions"]
+TABLE = json.loads((DATA / "ac_offsets.json").read_text(encoding="utf-8"))["versions"]
+COLLECTOR = json.loads((DATA / "ac_collector_offsets.json").read_text(encoding="utf-8"))["versions"]
 
 BLOCK_STRUCT = {
     "physics": "SPageFilePhysics",

@@ -6,6 +6,7 @@
 
 - 読み取り：ヘッダ（irsdk_header）、ディスク用ヘッダ、変数ヘッダ、セッション情報、記録の列の順に並ぶ。
   記録の数はディスク用ヘッダの値を使い、ファイルの長さと合わなければ失敗させる。
+  `SessionTime` が前の記録と同じ記録は落とし（警告を出す）、戻っていれば失敗させる。
 - コース：セッション情報の `TrackName`、`TrackConfigName` で `iracing_transform.toml` を探す。
   セッション情報は YAML だが、使うのはこの 2 つだけなので行を直接読む。
 - 局所座標：`Lat`、`Lon` をコースの `origin.toml` の原点で ENU に移し、相似変換で基準線に合わせる。
@@ -46,6 +47,7 @@ import polars as pl
 from scipy.signal import savgol_filter
 
 from ingest.ac_transform import TRACK_DIR, find_transform, fit_similarity, transform_toml
+from ingest.cli import utf8_stdio
 from ingest.derive import G, derive
 from ingest.laps import agrees_with_own_timing, lap_table
 from ingest.racechrono import to_enu
@@ -128,9 +130,18 @@ def read_ibt(path: Path) -> Ibt:
         "itemsize": buf_len,
     })
     records = np.frombuffer(b, dtype=dtype, count=n_rec, offset=buf_off)
-    t = records["SessionTime"]
-    if np.any(np.diff(t) <= 0):
-        raise ValueError(f"{path}: SessionTime が狭義単調増加でない")
+    dt = np.diff(records["SessionTime"])
+    if np.any(dt < 0):
+        raise ValueError(f"{path}: SessionTime が戻っている")
+    # 実物では SessionTick は1ずつ進むのに、SessionTime が前の記録と同じ値になることがある
+    # （1ファイルに数回。ほかの変数は進んでいる）。SessionTime は iRacing 自身の計時と一致するので
+    # 時刻はこれを使い、同じ時刻の後ろの記録を落とす（SessionTick から時刻を作ると周のタイムが最大 1 tick ずれた）
+    same = np.flatnonzero(dt == 0) + 1
+    if same.size:
+        warnings.warn(
+            f"{path.name}: SessionTime が前と同じ記録 {same.size} 件を落とした", stacklevel=2
+        )
+        records = np.delete(records, same)
     return Ibt(
         tick_rate=tick,
         start_unix=start_unix,
@@ -403,4 +414,5 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     main(sys.argv[1:])

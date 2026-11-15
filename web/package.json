@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "data": "./scripts/fixtures.sh"
+    "data": "cd .. && uv run python -m analysis.fixtures",
+    "iracing": "cd .. && uv run python -m ingest.iracing_dir --watch"
   },
   "dependencies": {
     "@observablehq/plot": "0.6.17",

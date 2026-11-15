@@ -96,13 +96,17 @@ def check_length(laps: pl.DataFrame, length: float) -> None:
 
 
 def default_ref(laps: pl.DataFrame) -> str | None:
-    """既定の基準ラップ：実車の有効で欠けのない周のうち `t_end` が最小の周。なければ None。"""
-    cand = laps.filter(
-        (pl.col("source") == "racechrono") & pl.col("lap_valid") & pl.col("complete")
-    )
-    if cand.height == 0:
-        return None
-    return cand.sort("t_end")["label"][0]
+    """既定の基準ラップ：実車の有効で欠けのない周のうち `t_end` が最小の周。
+
+    実車の周がなければ iRacing の同じ条件の周（iRacing は iRacing どうしで比べる。SPEC
+    「iRacing を後から足すための設計」）。どちらもなければ None（AC は実車と比べるので代わりにしない）。
+    """
+    ok = laps.filter(pl.col("lap_valid") & pl.col("complete"))
+    for source in ("racechrono", "iracing"):
+        cand = ok.filter(pl.col("source") == source)
+        if cand.height:
+            return cand.sort("t_end")["label"][0]
+    return None
 
 
 def load_laps(con: duckdb.DuckDBPyConnection, labels: list[str]) -> pl.DataFrame:

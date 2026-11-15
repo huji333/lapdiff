@@ -150,6 +150,37 @@ def test_truncated_file_fails(tmp_path):
         ibt.read_ibt(p)
 
 
+def _with_session_time(tmp_path, k: int, value_of: int) -> Path:
+    """BEST の記録 k の SessionTime を記録 value_of の値に書き換えたファイル。"""
+    b = bytearray(BEST.read_bytes())
+    buf_len = ibt.HEADER.unpack_from(b, 0)[9]
+    buf_off = ibt.VAR_BUF.unpack_from(b, 48)[1]
+    off = ibt.read_ibt(BEST).vars["SessionTime"].offset
+    src = buf_off + value_of * buf_len + off
+    dst = buf_off + k * buf_len + off
+    b[dst:dst + 8] = b[src:src + 8]
+    p = tmp_path / "edited.ibt"
+    p.write_bytes(bytes(b))
+    return p
+
+
+def test_repeated_session_time_drops_record(tmp_path):
+    """実物では SessionTime が前の記録と同じ値になることがある。後ろの記録を落として読む。"""
+    p = _with_session_time(tmp_path, 100, 99)
+    with pytest.warns(UserWarning, match="1 件を落とした"):
+        r = ibt.read_ibt(p)
+    assert len(r.records) == 7149
+    assert np.all(np.diff(r.col("SessionTime")) > 0)
+    ticks = r.col("SessionTick")
+    assert ticks[100] - ticks[99] == 2  # 落としたのは書き換えた記録
+
+
+def test_session_time_going_back_fails(tmp_path):
+    p = _with_session_time(tmp_path, 100, 98)
+    with pytest.raises(ValueError, match="戻っている"):
+        ibt.read_ibt(p)
+
+
 def test_unknown_track_fails(tmp_path):
     with pytest.raises(ValueError, match="iracing_transform.toml"):
         ibt.ingest(BEST, track_dir=tmp_path)

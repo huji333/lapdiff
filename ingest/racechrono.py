@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from ingest.cli import utf8_stdio
 from ingest.derive import derive
 from ingest.laps import lap_table
 from ingest.schema import JOIN_KEYS, TIMED_COLUMNS, to_common, write_session
@@ -262,4 +263,5 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     main(sys.argv[1:])

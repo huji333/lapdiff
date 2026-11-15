@@ -1,6 +1,6 @@
 # lapdiff
 
-実車（RaceChrono）と Assetto Corsa の走行データを、同じ処理で比較するための基盤。仕様は [SPEC.md](SPEC.md) を参照。
+実車（RaceChrono）と Assetto Corsa（と iRacing）の走行データを、同じ処理で比較するための基盤。仕様は [SPEC.md](SPEC.md) を参照。
 
 ## 開発
 
@@ -27,6 +27,21 @@ uv run python -m ingest.ibt --fit <ibt> <course>                  # track/<cours
 uv run python -m ingest.edges <course>                            # track/<course>/edges.csv（コースの端。地理院タイルを取得する）
 ```
 
+## iRacing の周を見る
+
+iRacing の telemetry フォルダ（`ドキュメント\iRacing\telemetry`）の `.ibt` をそのまま取り込み、web view で iRacing の周どうしを比べる。Windows ではリポジトリ直下の `iracing.cmd` をダブルクリックすると、取り込み、取り込みの見張り（別のウィンドウ）、web view の起動とブラウザを開くところまで進む（要るもの：uv と Node.js）。
+
+```sh
+uv run python -m ingest.iracing_dir            # 新しい .ibt を data/iracing/ に取り込み、web/public/data/ に書き出す
+uv run python -m ingest.iracing_dir --watch    # 見張り続ける（web/ で npm run iracing でも同じ）
+```
+
+- フォルダは `--dir`、環境変数 `LAPDIFF_IRACING_DIR`、ドキュメント（OneDrive のドキュメントも見る）の順に探す。取り込み先は `LAPDIFF_DATA`（既定 `data/`）
+- 取り込んだファイルは `data/iracing/ingested.json` に残し、変わったファイルだけ取り込み直す。更新から 30 秒たっていないファイルは、書いている途中かもしれないので後回しにする（`--settle`）
+- 新しい周を取り込むと書き出し直すので、ブラウザを再読み込みすると出る。基準ラップの既定は iRacing の有効な最速周、比較の既定はその次に速い周
+- `npm run data`（fixtures）と同じ `web/public/data/okayama.json` に書くので、あとから実行したほうが表示される
+- iRacing の設定で `app.ini` の `[Misc]` に `irsdkAutoLogDisk=1` を入れておくと、車に乗るたびに記録される（SPEC「記録は iRacing 自身の `.ibt` を使う」）
+
 ## 分析
 
 ```sh
@@ -45,7 +60,7 @@ LAPDIFF_DATA=data uv run marimo edit analysis/view1.py
 ```sh
 cd web
 npm ci
-npm run data      # fixtures を一時ディレクトリに取り込み、web/public/data/okayama.json に書き出す
+npm run data      # fixtures を一時ディレクトリに取り込み、web/public/data/okayama.json に書き出す（analysis.fixtures。Windows でも動く）
 npm run dev       # 表示された URL をブラウザで開く
 npm run typecheck
 npm test

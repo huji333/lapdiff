@@ -1,7 +1,7 @@
 """リポジトリの fixtures を取り込み、track/okayama の基準線・コーナー・コースの端で書き出す。
 
 合成した直線では踏まない条件（T5/T6 が接している、T7/T8 が境界を共有している、縁石の並び）を通す。
-`npm run data`（web/scripts/fixtures.sh）と同じ入力。
+`npm run data`（analysis.fixtures）と同じ入力。
 """
 
 import json
