@@ -39,6 +39,7 @@ uv run python -m ingest.iracing_dir --watch    # 見張り続ける（web/ で n
 - フォルダは `--dir`、環境変数 `LAPDIFF_IRACING_DIR`、ドキュメント（OneDrive のドキュメントも見る）の順に探す。取り込み先は `LAPDIFF_DATA`（既定 `data/`）
 - 取り込んだファイルは `data/iracing/ingested.json` に残し、変わったファイルだけ取り込み直す。更新から 30 秒たっていないファイルは、書いている途中かもしれないので後回しにする（`--settle`）
 - 新しい周を取り込むと書き出し直すので、ブラウザを再読み込みすると出る。基準ラップの既定は iRacing の有効な最速周、比較の既定はその次に速い周
+- ほかの人の速い周を基準にしたいときは、Garage 61 で周の CSV を書き出してダウンロードに置く（`Garage 61 - *.csv`）。同じ見張りが取り込む（`--garage61-dir` で場所を変える、`--no-garage61` で探さない）。1 つだけなら `uv run python -m ingest.garage61 <csv> data/`。CSV に時刻の列はないので 60 Hz の等間隔とみなし、ファイル名のタイムと 0.05 s 以内で合う周だけを有効にする
 - `npm run data`（fixtures）と同じ `web/public/data/okayama.json` に書くので、あとから実行したほうが表示される
 - iRacing の設定で `app.ini` の `[Misc]` に `irsdkAutoLogDisk=1` を入れておくと、車に乗るたびに記録される（SPEC「記録は iRacing 自身の `.ibt` を使う」）
 
